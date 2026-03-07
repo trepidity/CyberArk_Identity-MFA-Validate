@@ -77,12 +77,22 @@ fn handle_auth_input(app: &mut App, key: KeyCode) {
             app.active_field = (app.active_field + 1) % (max_field + 1);
         }
         KeyCode::BackTab if !is_browser => {
-            app.active_field = if app.active_field == 0 { max_field } else { app.active_field - 1 };
+            app.active_field = if app.active_field == 0 {
+                max_field
+            } else {
+                app.active_field - 1
+            };
         }
         KeyCode::Backspace => match app.active_field {
-            0 => { app.username.pop(); }
-            1 if !is_browser => { app.password.pop(); }
-            2 if !is_browser => { app.otp_code.pop(); }
+            0 => {
+                app.username.pop();
+            }
+            1 if !is_browser => {
+                app.password.pop();
+            }
+            2 if !is_browser => {
+                app.otp_code.pop();
+            }
             _ => {}
         },
         KeyCode::Char(c) => match app.active_field {

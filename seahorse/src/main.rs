@@ -2,7 +2,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -44,8 +44,7 @@ fn find_config_base_path() -> Option<PathBuf> {
 
 fn main() -> anyhow::Result<()> {
     // Setup file-based logging (seahorse.log in current directory)
-    let log_file =
-        std::fs::File::create("seahorse.log").expect("Failed to create seahorse.log");
+    let log_file = std::fs::File::create("seahorse.log").expect("Failed to create seahorse.log");
     tracing_subscriber::fmt()
         .with_writer(log_file)
         .with_ansi(false)
@@ -188,30 +187,30 @@ async fn run_rest_flow(app: &mut App) {
     info!("  Request body: {}", start_body);
 
     app.status_message = "Calling StartAuthentication...".to_string();
-    let start_result =
-        match auth::rest_flow::start_authentication(&client, tenant, username).await {
-            Ok(r) => {
-                info!("  Response: OK");
-                info!("  Resolved tenant: {}", r.tenant);
-                info!("  SessionId: {}", r.session_id);
-                info!("  Challenges count: {}", r.challenges.len());
-                for (ci, challenge) in r.challenges.iter().enumerate() {
-                    for (mi, m) in challenge.mechanisms.iter().enumerate() {
-                        info!(
-                            "  Challenge[{}].Mechanism[{}]: id={}, name={}, prompt={}",
-                            ci, mi, m.mechanism_id, m.name, m.prompt
-                        );
-                    }
+    let start_result = match auth::rest_flow::start_authentication(&client, tenant, username).await
+    {
+        Ok(r) => {
+            info!("  Response: OK");
+            info!("  Resolved tenant: {}", r.tenant);
+            info!("  SessionId: {}", r.session_id);
+            info!("  Challenges count: {}", r.challenges.len());
+            for (ci, challenge) in r.challenges.iter().enumerate() {
+                for (mi, m) in challenge.mechanisms.iter().enumerate() {
+                    info!(
+                        "  Challenge[{}].Mechanism[{}]: id={}, name={}, prompt={}",
+                        ci, mi, m.mechanism_id, m.name, m.prompt
+                    );
                 }
-                r
             }
-            Err(e) => {
-                error!("StartAuthentication failed: {}", e);
-                app.error_message = format!("StartAuthentication failed: {}", e);
-                app.screen = Screen::Error;
-                return;
-            }
-        };
+            r
+        }
+        Err(e) => {
+            error!("StartAuthentication failed: {}", e);
+            app.error_message = format!("StartAuthentication failed: {}", e);
+            app.screen = Screen::Error;
+            return;
+        }
+    };
 
     // Use the resolved tenant (may differ from config due to PodFqdn redirect)
     let resolved_tenant = &start_result.tenant;
@@ -432,10 +431,7 @@ async fn run_rest_flow(app: &mut App) {
     finalize_assertion(app, &assertion_xml);
 }
 
-fn run_browser_flow(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) {
+fn run_browser_flow(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) {
     let config = match app.config.clone() {
         Some(c) => c,
         None => {
@@ -451,11 +447,7 @@ fn run_browser_flow(
     info!("AppKey: {}", config.appkey);
     info!("Username: {}", app.username);
 
-    let login_url = auth::browser_flow::build_login_url(
-        &config.url,
-        &app.username,
-        &config.appkey,
-    );
+    let login_url = auth::browser_flow::build_login_url(&config.url, &app.username, &config.appkey);
     info!("Login URL: {}", login_url);
 
     // Exit TUI so the webview window can take focus
@@ -489,18 +481,16 @@ fn run_browser_flow(
     // The IPC gives us the raw base64-encoded SAMLResponse value.
     // Decode it to get the XML, then extract the assertion.
     info!("Decoding SAMLResponse...");
-    let xml_bytes = match base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &saml_b64,
-    ) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            error!("Failed to base64-decode SAMLResponse: {}", e);
-            app.error_message = format!("Failed to base64-decode SAMLResponse: {}", e);
-            app.screen = Screen::Error;
-            return;
-        }
-    };
+    let xml_bytes =
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &saml_b64) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("Failed to base64-decode SAMLResponse: {}", e);
+                app.error_message = format!("Failed to base64-decode SAMLResponse: {}", e);
+                app.screen = Screen::Error;
+                return;
+            }
+        };
 
     let response_xml = match String::from_utf8(xml_bytes) {
         Ok(s) => s,
@@ -513,7 +503,10 @@ fn run_browser_flow(
     };
 
     info!("SAMLResponse XML length: {}", response_xml.len());
-    info!("SAMLResponse XML:\n{}", &response_xml[..response_xml.len().min(1000)]);
+    info!(
+        "SAMLResponse XML:\n{}",
+        &response_xml[..response_xml.len().min(1000)]
+    );
 
     // Extract the <Assertion> from the <saml2p:Response>
     let assertion_xml = match saml::parser::extract_assertion_from_response(&response_xml) {

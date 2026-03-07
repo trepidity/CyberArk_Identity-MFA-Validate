@@ -29,20 +29,14 @@ fn test_sign_and_verify() {
     let bundle = seahorse::crypto::load_pfx(&pfx_path, &password).unwrap();
 
     let data = b"test data to sign";
-    let signature = seahorse::crypto::sign_sha256(
-        bundle.private_key.as_ref().unwrap(),
-        data,
-    )
-    .unwrap();
+    let signature =
+        seahorse::crypto::sign_sha256(bundle.private_key.as_ref().unwrap(), data).unwrap();
 
     assert!(!signature.is_empty());
 
-    let valid = seahorse::crypto::verify_sha256(
-        bundle.certificate.as_ref().unwrap(),
-        data,
-        &signature,
-    )
-    .unwrap();
+    let valid =
+        seahorse::crypto::verify_sha256(bundle.certificate.as_ref().unwrap(), data, &signature)
+            .unwrap();
     assert!(valid);
 }
 

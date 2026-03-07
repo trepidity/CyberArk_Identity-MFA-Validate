@@ -12,7 +12,10 @@ fn test_load_config_tst() {
 
     assert_eq!(config.url, "aad4047.my.idaptive.app");
     assert_eq!(config.timeout, 60);
-    assert_eq!(config.certificate, "hyperdrive-2fa-np-privatekey_export.pfx");
+    assert_eq!(
+        config.certificate,
+        "hyperdrive-2fa-np-privatekey_export.pfx"
+    );
     assert_eq!(config.appkey, "580e07dc-97b6-45b7-85c0-77fae7b141b0");
     assert_eq!(config.certkey, "UGFzc3dvcmQx");
     assert_eq!(config.check_user, false);

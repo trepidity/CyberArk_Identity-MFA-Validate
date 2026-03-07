@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use chrono::Utc;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private};
@@ -58,7 +58,10 @@ pub fn build_signed_assertion(
 
     let assertion_for_digest = format!(
         r#"<saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="{id}" IssueInstant="{instant}" Version="2.0"><saml2:Issuer>{issuer}</saml2:Issuer>{body}</saml2:Assertion>"#,
-        id = id, instant = instant, issuer = params.issuer, body = assertion_body,
+        id = id,
+        instant = instant,
+        issuer = params.issuer,
+        body = assertion_body,
     );
 
     let digest = openssl::hash::hash(MessageDigest::sha256(), assertion_for_digest.as_bytes())
@@ -68,12 +71,15 @@ pub fn build_signed_assertion(
     let uri_ref = format!("#{}", id);
     let signed_info = format!(
         r#"<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="{uri_ref}"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/><ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>{digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>"#,
-        uri_ref = uri_ref, digest = digest_b64,
+        uri_ref = uri_ref,
+        digest = digest_b64,
     );
 
-    let mut signer = Signer::new(MessageDigest::sha256(), private_key)
-        .context("Failed to create signer")?;
-    signer.update(signed_info.as_bytes()).context("Failed to update signer")?;
+    let mut signer =
+        Signer::new(MessageDigest::sha256(), private_key).context("Failed to create signer")?;
+    signer
+        .update(signed_info.as_bytes())
+        .context("Failed to update signer")?;
     let signature_bytes = signer.sign_to_vec().context("Failed to sign")?;
     let signature_b64 = STANDARD.encode(&signature_bytes);
 
@@ -82,12 +88,18 @@ pub fn build_signed_assertion(
 
     let signature_element = format!(
         r#"<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">{signed_info}<ds:SignatureValue>{sig_value}</ds:SignatureValue><ds:KeyInfo><ds:X509Data><ds:X509Certificate>{cert}</ds:X509Certificate></ds:X509Data></ds:KeyInfo></ds:Signature>"#,
-        signed_info = signed_info, sig_value = signature_b64, cert = cert_b64,
+        signed_info = signed_info,
+        sig_value = signature_b64,
+        cert = cert_b64,
     );
 
     let signed_assertion = format!(
         r#"<saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="{id}" IssueInstant="{instant}" Version="2.0"><saml2:Issuer>{issuer}</saml2:Issuer>{signature}{body}</saml2:Assertion>"#,
-        id = id, instant = instant, issuer = params.issuer, signature = signature_element, body = assertion_body,
+        id = id,
+        instant = instant,
+        issuer = params.issuer,
+        signature = signature_element,
+        body = assertion_body,
     );
 
     Ok(signed_assertion)

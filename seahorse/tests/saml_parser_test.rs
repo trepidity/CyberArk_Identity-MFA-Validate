@@ -23,14 +23,8 @@ fn test_extract_assertion_details() {
     assert_eq!(details.issuer, "https://issuer.example.com");
     assert_eq!(details.subject, "jsmith");
     assert_eq!(details.audience, "epic://epicenvironment");
-    assert_eq!(
-        details.not_before.as_deref(),
-        Some("2026-03-06T12:00:00Z")
-    );
-    assert_eq!(
-        details.not_after.as_deref(),
-        Some("2026-03-06T12:05:00Z")
-    );
+    assert_eq!(details.not_before.as_deref(), Some("2026-03-06T12:00:00Z"));
+    assert_eq!(details.not_after.as_deref(), Some("2026-03-06T12:05:00Z"));
     assert!(details.authn_context.contains("Password"));
     assert!(!details.has_signature);
 }
@@ -39,8 +33,7 @@ fn test_extract_assertion_details() {
 fn test_extract_assertion_from_response_xml() {
     let response_xml = r#"<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"><saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="_abc"><saml2:Issuer>test</saml2:Issuer></saml2:Assertion></saml2p:Response>"#;
 
-    let assertion =
-        seahorse::saml::parser::extract_assertion_from_response(response_xml).unwrap();
+    let assertion = seahorse::saml::parser::extract_assertion_from_response(response_xml).unwrap();
     assert!(assertion.contains("saml2:Assertion"));
     assert!(assertion.contains("test"));
 }

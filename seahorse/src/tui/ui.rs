@@ -28,7 +28,11 @@ fn render_env_select(frame: &mut Frame, app: &App) {
         .split(frame.area());
 
     let title = Paragraph::new("Seahorse - SAML Validation Tool")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
@@ -73,12 +77,13 @@ fn render_flow_select(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
-    let env_name = app
-        .environment
-        .map(|e| e.to_string())
-        .unwrap_or_default();
+    let env_name = app.environment.map(|e| e.to_string()).unwrap_or_default();
     let title = Paragraph::new(format!("Seahorse - Environment: {}", env_name))
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
@@ -148,12 +153,13 @@ fn render_auth_input(frame: &mut Frame, app: &App) {
         .constraints(constraints)
         .split(frame.area());
 
-    let flow_name = app
-        .flow_mode
-        .map(|f| f.to_string())
-        .unwrap_or_default();
+    let flow_name = app.flow_mode.map(|f| f.to_string()).unwrap_or_default();
     let title = Paragraph::new(format!("Seahorse - {} Authentication", flow_name))
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
@@ -189,18 +195,16 @@ fn render_auth_input(frame: &mut Frame, app: &App) {
             Style::default()
         };
         let masked: String = "*".repeat(app.password.len());
-        let password = Paragraph::new(masked)
-            .style(pw_style)
-            .block(
-                Block::default()
-                    .title("Password")
-                    .borders(Borders::ALL)
-                    .border_style(if app.active_field == 1 {
-                        Style::default().fg(Color::Yellow)
-                    } else {
-                        Style::default()
-                    }),
-            );
+        let password = Paragraph::new(masked).style(pw_style).block(
+            Block::default()
+                .title("Password")
+                .borders(Borders::ALL)
+                .border_style(if app.active_field == 1 {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                }),
+        );
         frame.render_widget(password, chunks[2]);
 
         // OTP field
@@ -241,7 +245,11 @@ fn render_waiting(frame: &mut Frame, app: &App) {
         .split(frame.area());
 
     let title = Paragraph::new("Seahorse - Authenticating")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
@@ -403,7 +411,11 @@ fn render_error(frame: &mut Frame, app: &App) {
 
     let error = Paragraph::new(app.error_message.as_str())
         .style(Style::default().fg(Color::Red))
-        .block(Block::default().title("Error Details").borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title("Error Details")
+                .borders(Borders::ALL),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(error, chunks[1]);
 

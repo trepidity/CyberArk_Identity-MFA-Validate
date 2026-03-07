@@ -1,10 +1,10 @@
 use anyhow::{bail, Context, Result};
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use openssl::x509::X509;
-use quick_xml::Reader;
 use quick_xml::events::Event;
+use quick_xml::Reader;
 
 #[derive(Debug)]
 pub struct SignatureValidation {
@@ -121,7 +121,8 @@ pub fn check_time_conditions(not_before: Option<&str>, not_after: Option<&str>) 
     let now = Utc::now();
 
     if let Some(nb) = not_before {
-        let nb_time: DateTime<Utc> = nb.parse()
+        let nb_time: DateTime<Utc> = nb
+            .parse()
             .with_context(|| format!("Invalid NotBefore timestamp: {}", nb))?;
         if now < nb_time {
             bail!("Assertion not yet valid (NotBefore: {})", nb);
@@ -129,7 +130,8 @@ pub fn check_time_conditions(not_before: Option<&str>, not_after: Option<&str>) 
     }
 
     if let Some(na) = not_after {
-        let na_time: DateTime<Utc> = na.parse()
+        let na_time: DateTime<Utc> = na
+            .parse()
             .with_context(|| format!("Invalid NotOnOrAfter timestamp: {}", na))?;
         if now > na_time {
             bail!("Assertion has expired (NotOnOrAfter: {})", na);

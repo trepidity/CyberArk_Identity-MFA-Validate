@@ -9,7 +9,10 @@ fn test_start_auth_request_body() {
 #[test]
 fn test_advance_auth_request_body() {
     let body = seahorse::auth::rest_flow::build_advance_auth_body(
-        "session-123", "mech-456", "Answer", "123456",
+        "session-123",
+        "mech-456",
+        "Answer",
+        "123456",
     );
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed["SessionId"], "session-123");
@@ -33,7 +36,8 @@ fn test_parse_start_auth_response() {
             }]
         }
     }"#;
-    let result = seahorse::auth::rest_flow::parse_start_auth_response(json, "tenant.example.com").unwrap();
+    let result =
+        seahorse::auth::rest_flow::parse_start_auth_response(json, "tenant.example.com").unwrap();
     assert_eq!(result.session_id, "sess-abc");
     assert_eq!(result.tenant, "tenant.example.com");
     assert_eq!(result.challenges.len(), 1);
@@ -48,7 +52,9 @@ fn test_parse_start_auth_response_pod_redirect() {
         "Result": {"PodFqdn": "bswh.my.idaptive.app"},
         "Message": null
     }"#;
-    let result = seahorse::auth::rest_flow::parse_start_auth_response(json, "aad4047.my.idaptive.app").unwrap();
+    let result =
+        seahorse::auth::rest_flow::parse_start_auth_response(json, "aad4047.my.idaptive.app")
+            .unwrap();
     assert_eq!(result.tenant, "bswh.my.idaptive.app");
     assert!(result.session_id.is_empty());
     assert!(result.challenges.is_empty());
@@ -86,11 +92,17 @@ fn test_parse_advance_auth_otp_challenge() {
 #[test]
 fn test_build_start_auth_url() {
     let url = seahorse::auth::rest_flow::build_start_auth_url("aad4047.my.idaptive.app");
-    assert_eq!(url, "https://aad4047.my.idaptive.app/Security/StartAuthentication");
+    assert_eq!(
+        url,
+        "https://aad4047.my.idaptive.app/Security/StartAuthentication"
+    );
 }
 
 #[test]
 fn test_build_advance_auth_url() {
     let url = seahorse::auth::rest_flow::build_advance_auth_url("aad4047.my.idaptive.app");
-    assert_eq!(url, "https://aad4047.my.idaptive.app/Security/AdvanceAuthentication");
+    assert_eq!(
+        url,
+        "https://aad4047.my.idaptive.app/Security/AdvanceAuthentication"
+    );
 }

@@ -64,7 +64,12 @@ pub fn build_start_auth_body(username: &str) -> String {
     .unwrap()
 }
 
-pub fn build_advance_auth_body(session_id: &str, mechanism_id: &str, action: &str, answer: &str) -> String {
+pub fn build_advance_auth_body(
+    session_id: &str,
+    mechanism_id: &str,
+    action: &str,
+    answer: &str,
+) -> String {
     serde_json::to_string(&AdvanceAuthRequest {
         session_id: session_id.to_string(),
         mechanism_id: mechanism_id.to_string(),
@@ -123,10 +128,7 @@ pub fn parse_advance_auth_response(json: &str) -> Result<AdvanceAuthResult> {
         serde_json::from_str(json).context("Failed to parse AdvanceAuthentication response")?;
     let success = v["success"].as_bool().unwrap_or(false);
     let result = &v["Result"];
-    let summary = result["Summary"]
-        .as_str()
-        .unwrap_or("Unknown")
-        .to_string();
+    let summary = result["Summary"].as_str().unwrap_or("Unknown").to_string();
     let token = result["Auth"].as_str().map(|s| s.to_string());
 
     Ok(AdvanceAuthResult {

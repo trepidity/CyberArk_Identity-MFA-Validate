@@ -48,11 +48,7 @@ pub fn parse_saml_post_body(body: &str) -> Result<SamlParseResult> {
 
 pub fn extract_assertion_from_response(response_xml: &str) -> Result<String> {
     let assertion_starts = ["<saml2:Assertion", "<saml:Assertion", "<Assertion"];
-    let assertion_ends = [
-        "</saml2:Assertion>",
-        "</saml:Assertion>",
-        "</Assertion>",
-    ];
+    let assertion_ends = ["</saml2:Assertion>", "</saml:Assertion>", "</Assertion>"];
 
     for (start_tag, end_tag) in assertion_starts.iter().zip(assertion_ends.iter()) {
         if let Some(start_idx) = response_xml.find(start_tag) {
@@ -79,8 +75,7 @@ pub fn extract_assertion_details(assertion_xml: &str) -> Result<AssertionDetails
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                let local_name =
-                    String::from_utf8_lossy(e.local_name().as_ref()).to_string();
+                let local_name = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
                 current_element = local_name.clone();
 
                 match local_name.as_str() {
@@ -91,9 +86,7 @@ pub fn extract_assertion_details(assertion_xml: &str) -> Result<AssertionDetails
                             let val = String::from_utf8_lossy(&attr.value);
                             match key.as_ref() {
                                 "ID" => details.assertion_id = val.to_string(),
-                                "IssueInstant" => {
-                                    details.issue_instant = val.to_string()
-                                }
+                                "IssueInstant" => details.issue_instant = val.to_string(),
                                 _ => {}
                             }
                         }
@@ -104,12 +97,8 @@ pub fn extract_assertion_details(assertion_xml: &str) -> Result<AssertionDetails
                             let key = String::from_utf8_lossy(local.as_ref());
                             let val = String::from_utf8_lossy(&attr.value);
                             match key.as_ref() {
-                                "NotBefore" => {
-                                    details.not_before = Some(val.to_string())
-                                }
-                                "NotOnOrAfter" => {
-                                    details.not_after = Some(val.to_string())
-                                }
+                                "NotBefore" => details.not_before = Some(val.to_string()),
+                                "NotOnOrAfter" => details.not_after = Some(val.to_string()),
                                 _ => {}
                             }
                         }
