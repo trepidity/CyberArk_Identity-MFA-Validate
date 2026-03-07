@@ -28,9 +28,6 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             artifact: seahorse-macos-arm64
-          - target: x86_64-apple-darwin
-            os: macos-13
-            artifact: seahorse-macos-amd64
 
     steps:
       - uses: actions/checkout@v4
