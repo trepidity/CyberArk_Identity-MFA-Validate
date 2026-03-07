@@ -32,7 +32,7 @@ fn render_env_select(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
-    let envs = vec!["PROD", "TST"];
+    let envs = ["PROD", "TST"];
     let items: Vec<ListItem> = envs
         .iter()
         .enumerate()
@@ -82,7 +82,7 @@ fn render_flow_select(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
-    let flows = vec!["Browser Flow", "REST API Flow"];
+    let flows = ["Browser Flow", "REST API Flow"];
     let items: Vec<ListItem> = flows
         .iter()
         .enumerate()

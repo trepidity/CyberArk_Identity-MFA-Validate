@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "BSWH MFA Validate - OATH/SAML validation against CyberArk Identity"
 
+[lints.rust]
+unexpected_cfgs = "allow"
+
 [[bin]]
 name = "seahorse"
 path = "src/main.rs"

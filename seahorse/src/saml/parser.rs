@@ -25,8 +25,8 @@ pub struct AssertionDetails {
 }
 
 pub fn parse_saml_post_body(body: &str) -> Result<SamlParseResult> {
-    let value = if body.starts_with("SAMLResponse=") {
-        &body["SAMLResponse=".len()..]
+    let value = if let Some(stripped) = body.strip_prefix("SAMLResponse=") {
+        stripped
     } else {
         body
     };

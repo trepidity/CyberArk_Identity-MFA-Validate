@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tracing::{debug, info, error};
+use tracing::{debug, info};
 
 #[derive(Debug, Serialize)]
 struct StartAuthRequest {

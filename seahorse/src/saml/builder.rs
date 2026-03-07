@@ -63,7 +63,7 @@ pub fn build_signed_assertion(
 
     let digest = openssl::hash::hash(MessageDigest::sha256(), assertion_for_digest.as_bytes())
         .context("Failed to compute SHA-256 digest")?;
-    let digest_b64 = STANDARD.encode(&digest);
+    let digest_b64 = STANDARD.encode(digest);
 
     let uri_ref = format!("#{}", id);
     let signed_info = format!(
