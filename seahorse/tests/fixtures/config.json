@@ -1,0 +1,10 @@
+{
+  "url": "test-tenant.my.idaptive.app",
+  "timeout": 60,
+  "certificate": "test-cert.pfx",
+  "appkey": "00000000-0000-0000-0000-000000000000",
+  "certkey": "dGVzdHBhc3N3b3Jk",
+  "CheckUser": false,
+  "UseBypass": true,
+  "browser": "chrome"
+}

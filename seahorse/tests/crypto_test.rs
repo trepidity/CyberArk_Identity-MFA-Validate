@@ -1,16 +1,14 @@
 use std::path::PathBuf;
 
+fn test_pfx_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-cert.pfx")
+}
+
+const TEST_PFX_PASSWORD: &str = "testpassword";
+
 #[test]
 fn test_load_pfx() {
-    let pfx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("config")
-        .join("TST")
-        .join("hyperdrive-2fa-np-privatekey_export.pfx");
-
-    let password = seahorse::config::decode_certkey("UGFzc3dvcmQx").unwrap();
-    let cert_bundle = seahorse::crypto::load_pfx(&pfx_path, &password).unwrap();
+    let cert_bundle = seahorse::crypto::load_pfx(&test_pfx_path(), TEST_PFX_PASSWORD).unwrap();
 
     assert!(cert_bundle.private_key.is_some());
     assert!(cert_bundle.certificate.is_some());
@@ -18,15 +16,7 @@ fn test_load_pfx() {
 
 #[test]
 fn test_sign_and_verify() {
-    let pfx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("config")
-        .join("TST")
-        .join("hyperdrive-2fa-np-privatekey_export.pfx");
-
-    let password = seahorse::config::decode_certkey("UGFzc3dvcmQx").unwrap();
-    let bundle = seahorse::crypto::load_pfx(&pfx_path, &password).unwrap();
+    let bundle = seahorse::crypto::load_pfx(&test_pfx_path(), TEST_PFX_PASSWORD).unwrap();
 
     let data = b"test data to sign";
     let signature =
@@ -42,15 +32,7 @@ fn test_sign_and_verify() {
 
 #[test]
 fn test_cert_to_base64_der() {
-    let pfx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("config")
-        .join("TST")
-        .join("hyperdrive-2fa-np-privatekey_export.pfx");
-
-    let password = seahorse::config::decode_certkey("UGFzc3dvcmQx").unwrap();
-    let bundle = seahorse::crypto::load_pfx(&pfx_path, &password).unwrap();
+    let bundle = seahorse::crypto::load_pfx(&test_pfx_path(), TEST_PFX_PASSWORD).unwrap();
 
     let b64 = seahorse::crypto::cert_to_base64_der(bundle.certificate.as_ref().unwrap()).unwrap();
     assert!(!b64.is_empty());

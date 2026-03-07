@@ -2,15 +2,9 @@ use std::path::PathBuf;
 
 #[test]
 fn test_validate_self_signed_assertion() {
-    let pfx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("config")
-        .join("TST")
-        .join("hyperdrive-2fa-np-privatekey_export.pfx");
+    let pfx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-cert.pfx");
 
-    let password = seahorse::config::decode_certkey("UGFzc3dvcmQx").unwrap();
-    let bundle = seahorse::crypto::load_pfx(&pfx_path, &password).unwrap();
+    let bundle = seahorse::crypto::load_pfx(&pfx_path, "testpassword").unwrap();
 
     let params = seahorse::saml::builder::AssertionParams {
         issuer: "https://test.example.com".to_string(),

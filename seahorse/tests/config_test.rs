@@ -1,38 +1,31 @@
 use std::path::PathBuf;
 
 #[test]
-fn test_load_config_tst() {
-    let config_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("config")
-        .join("TST");
+fn test_load_config_fixture() {
+    let config_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
 
     let config = seahorse::config::load_config(&config_dir).unwrap();
 
-    assert_eq!(config.url, "aad4047.my.idaptive.app");
+    assert_eq!(config.url, "test-tenant.my.idaptive.app");
     assert_eq!(config.timeout, 60);
-    assert_eq!(
-        config.certificate,
-        "hyperdrive-2fa-np-privatekey_export.pfx"
-    );
-    assert_eq!(config.appkey, "580e07dc-97b6-45b7-85c0-77fae7b141b0");
-    assert_eq!(config.certkey, "UGFzc3dvcmQx");
-    assert_eq!(config.check_user, false);
-    assert_eq!(config.use_bypass, true);
+    assert_eq!(config.certificate, "test-cert.pfx");
+    assert_eq!(config.appkey, "00000000-0000-0000-0000-000000000000");
+    assert_eq!(config.certkey, "dGVzdHBhc3N3b3Jk");
+    assert!(!config.check_user);
+    assert!(config.use_bypass);
     assert_eq!(config.browser, "chrome");
 }
 
 #[test]
 fn test_decode_certkey() {
-    let decoded = seahorse::config::decode_certkey("UGFzc3dvcmQx").unwrap();
-    assert_eq!(decoded, "Password1");
+    let decoded = seahorse::config::decode_certkey("dGVzdHBhc3N3b3Jk").unwrap();
+    assert_eq!(decoded, "testpassword");
 }
 
 #[test]
-fn test_decode_certkey_prod() {
-    let decoded = seahorse::config::decode_certkey("Y0FyazJlUGNzMjAyMw==").unwrap();
-    assert_eq!(decoded, "cArk2ePcs2023");
+fn test_decode_certkey_roundtrip() {
+    let decoded = seahorse::config::decode_certkey("UGFzc3dvcmQx").unwrap();
+    assert_eq!(decoded, "Password1");
 }
 
 #[test]
