@@ -1,6 +1,6 @@
-# Seahorse - BSWH MFA Validate
+# Seahorse - CyberArk Identity - MFA Validate
 
-A Rust TUI application that validates OATH MFA codes against CyberArk Identity and displays SAML responses. Replaces the legacy .NET Epic GenAuth Test Host.
+A Rust TUI application that validates OATH MFA codes against CyberArk Identity and displays SAML responses. Replaces the legacy .NET Epic GenAuth Test Host that CyberArk built for Epic EPCS Plugin.
 
 ## Features
 
