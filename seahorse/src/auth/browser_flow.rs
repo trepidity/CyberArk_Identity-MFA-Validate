@@ -1,11 +1,74 @@
-use std::future::IntoFuture;
 use anyhow::{Context, Result};
-use axum::{extract::State, response::Html, routing::post, Router};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
-use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use std::sync::{Arc, Mutex};
+use tao::event::{Event, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::platform::run_return::EventLoopExtRunReturn;
+use tao::window::WindowBuilder;
+use tracing::info;
+use wry::WebViewBuilder;
+
+#[cfg(target_os = "macos")]
+use tao::platform::macos::WindowExtMacOS;
+
+/// JavaScript injected into every page load (runs at document-start).
+/// Uses three layers to intercept the SAMLResponse before it gets POSTed to /security/whoami:
+///   1. Override HTMLFormElement.prototype.submit() — catches programmatic form.submit() calls
+///   2. Global 'submit' event listener in capture phase — catches event-based submissions
+///   3. Polling fallback — catches any edge cases where the above miss it
+const INTERCEPT_JS: &str = r#"
+(function() {
+    var captured = false;
+
+    function sendToRust(value) {
+        if (captured) return;
+        captured = true;
+        window.ipc.postMessage(value);
+    }
+
+    // Layer 1: Override HTMLFormElement.prototype.submit() globally.
+    // CyberArk's SAML POST binding page uses <body onload="document.forms[0].submit()">
+    // This override fires BEFORE the native submit happens.
+    var originalSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function() {
+        var input = this.querySelector('input[name="SAMLResponse"]');
+        if (input && input.value) {
+            sendToRust(input.value);
+            return; // Block the actual submission
+        }
+        originalSubmit.call(this);
+    };
+
+    // Layer 2: Global submit event listener (capture phase).
+    // Fires before any element-level handlers.
+    document.addEventListener('submit', function(e) {
+        var form = e.target;
+        var input = form.querySelector('input[name="SAMLResponse"]');
+        if (input && input.value) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            sendToRust(input.value);
+            return false;
+        }
+    }, true);
+
+    // Layer 3: Poll for SAMLResponse input appearing in the DOM.
+    // Fallback in case the form exists before our script runs on some platforms.
+    var checkInterval = setInterval(function() {
+        var inputs = document.querySelectorAll('input[name="SAMLResponse"]');
+        for (var i = 0; i < inputs.length; i++) {
+            if (inputs[i].value) {
+                clearInterval(checkInterval);
+                sendToRust(inputs[i].value);
+                return;
+            }
+        }
+    }, 50);
+
+    // Stop polling after 60 seconds
+    setTimeout(function() { clearInterval(checkInterval); }, 60000);
+})();
+"#;
 
 pub fn build_login_url(tenant: &str, username: &str, appkey: &str) -> String {
     format!(
@@ -14,81 +77,95 @@ pub fn build_login_url(tenant: &str, username: &str, appkey: &str) -> String {
     )
 }
 
-pub fn build_authn_request(
-    acs_url: &str,
-    audience: &str,
-    idp_url: &str,
-) -> Result<String> {
-    let id = format!("_{}", uuid::Uuid::new_v4());
-    let instant = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+/// Opens a native webview window to the CyberArk login URL.
+/// Injects JS to intercept the SAMLResponse POST.
+/// Returns the base64-encoded SAMLResponse value.
+///
+/// This function blocks the current (main) thread until the user completes
+/// authentication or closes the window.
+///
+/// IMPORTANT: On macOS, `event_loop.run()` never returns — it calls `std::process::exit()`.
+/// We store the result in a shared Arc<Mutex<>> and use `std::process::exit()` ourselves
+/// after writing the result. The caller must handle this.
+pub fn run_webview_flow(login_url: &str) -> Result<String> {
+    info!("[Webview] Opening login URL: {}", login_url);
 
-    let xml = format!(
-        r#"<saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="{id}" Version="2.0" IssueInstant="{instant}" AssertionConsumerServiceURL="{acs}" Destination="{destination}"><saml2:Issuer>{audience}</saml2:Issuer></saml2p:AuthnRequest>"#,
-        id = id,
-        instant = instant,
-        acs = acs_url,
-        destination = idp_url,
-        audience = audience,
-    );
+    // Shared state for the captured SAMLResponse
+    let result: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let result_clone = result.clone();
 
-    Ok(xml)
-}
+    let mut event_loop = EventLoopBuilder::new().build();
+    let window = WindowBuilder::new()
+        .with_title("Seahorse - CyberArk Login")
+        .with_inner_size(tao::dpi::LogicalSize::new(800.0, 700.0))
+        .build(&event_loop)
+        .context("Failed to create webview window")?;
 
-pub fn encode_authn_request(xml: &str) -> String {
-    STANDARD.encode(xml.as_bytes())
-}
+    // On macOS, grab the raw NSWindow pointer so we can forcibly close it later.
+    // tao's Window::drop doesn't reliably close the native window after run_return.
+    #[cfg(target_os = "macos")]
+    let ns_window = window.ns_window();
 
-struct AcsState {
-    response_tx: Option<oneshot::Sender<String>>,
-}
+    let proxy = event_loop.create_proxy();
 
-pub async fn start_acs_listener(
-    port: u16,
-    port_tx: oneshot::Sender<u16>,
-) -> Result<String> {
-    let (response_tx, response_rx) = oneshot::channel::<String>();
+    let _webview = WebViewBuilder::new()
+        .with_url(login_url)
+        .with_initialization_script(INTERCEPT_JS)
+        .with_ipc_handler(move |msg| {
+            let body = msg.body();
+            info!("[Webview IPC] Received SAMLResponse ({} chars)", body.len());
+            {
+                let mut guard = result_clone.lock().unwrap();
+                *guard = Some(body.to_string());
+            }
+            // Signal the event loop to exit
+            let _ = proxy.send_event(());
+        })
+        .build(&window)
+        .context("Failed to create webview")?;
 
-    let state = Arc::new(tokio::sync::Mutex::new(AcsState {
-        response_tx: Some(response_tx),
-    }));
+    info!("[Webview] Window opened, waiting for SAMLResponse...");
 
-    let app = Router::new()
-        .route("/acs", post(handle_acs_post))
-        .with_state(state);
+    // Use run_return so we can return control to the caller after the webview closes.
+    // Unlike run(), run_return() does NOT call std::process::exit().
+    event_loop.run_return(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
 
-    let addr = format!("127.0.0.1:{}", port);
-    let listener = TcpListener::bind(&addr)
-        .await
-        .context("Failed to bind ACS listener")?;
-
-    let actual_port = listener.local_addr()?.port();
-    let _ = port_tx.send(actual_port);
-
-    let server = axum::serve(listener, app);
-
-    tokio::select! {
-        result = response_rx => {
-            let saml_response: String = result.context("ACS listener channel closed unexpectedly")?;
-            Ok(saml_response)
+        match event {
+            Event::UserEvent(()) => {
+                info!("[Webview] SAMLResponse captured, exiting event loop");
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                info!("[Webview] Window closed by user");
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
         }
-        result = server.into_future() => {
-            let _: () = result.context("ACS HTTP server error")?;
-            anyhow::bail!("ACS server stopped without receiving SAMLResponse")
+    });
+
+    // On macOS, explicitly close the native NSWindow via objc messaging.
+    // tao's run_return stops the event loop but doesn't close the window,
+    // leaving a zombie window on screen.
+    #[cfg(target_os = "macos")]
+    {
+        info!("[Webview] Closing NSWindow via objc");
+        unsafe {
+            use objc::runtime::Object;
+            use objc::{msg_send, sel, sel_impl};
+            let ns_win = ns_window as *mut Object;
+            let () = msg_send![ns_win, orderOut: std::ptr::null::<Object>()];
+            let () = msg_send![ns_win, close];
         }
     }
-}
 
-async fn handle_acs_post(
-    State(state): State<Arc<tokio::sync::Mutex<AcsState>>>,
-    body: String,
-) -> Html<String> {
-    let mut state = state.lock().await;
-    if let Some(tx) = state.response_tx.take() {
-        let _ = tx.send(body);
-    }
-    Html("<html><body><h1>Authentication received. You may close this tab.</h1></body></html>".to_string())
-}
+    info!("[Webview] Window closed and resources released");
 
-pub fn open_browser(url: &str) -> Result<()> {
-    open::that(url).context("Failed to open browser")
+    let guard = result.lock().unwrap();
+    guard
+        .clone()
+        .context("Webview closed without receiving SAMLResponse")
 }

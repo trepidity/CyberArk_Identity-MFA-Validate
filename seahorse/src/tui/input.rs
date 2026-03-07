@@ -70,24 +70,27 @@ fn handle_flow_select(app: &mut App, key: KeyCode) {
 }
 
 fn handle_auth_input(app: &mut App, key: KeyCode) {
+    let is_browser = app.flow_mode == Some(super::app::FlowMode::Browser);
+    let max_field = if is_browser { 0 } else { 2 };
     match key {
-        KeyCode::Tab => {
-            app.active_field = if app.active_field == 0 { 1 } else { 0 };
+        KeyCode::Tab if !is_browser => {
+            app.active_field = (app.active_field + 1) % (max_field + 1);
         }
-        KeyCode::Backspace => {
-            if app.active_field == 0 {
-                app.username.pop();
-            } else {
-                app.otp_code.pop();
-            }
+        KeyCode::BackTab if !is_browser => {
+            app.active_field = if app.active_field == 0 { max_field } else { app.active_field - 1 };
         }
-        KeyCode::Char(c) => {
-            if app.active_field == 0 {
-                app.username.push(c);
-            } else {
-                app.otp_code.push(c);
-            }
-        }
+        KeyCode::Backspace => match app.active_field {
+            0 => { app.username.pop(); }
+            1 if !is_browser => { app.password.pop(); }
+            2 if !is_browser => { app.otp_code.pop(); }
+            _ => {}
+        },
+        KeyCode::Char(c) => match app.active_field {
+            0 => app.username.push(c),
+            1 if !is_browser => app.password.push(c),
+            2 if !is_browser => app.otp_code.push(c),
+            _ => {}
+        },
         KeyCode::Enter => {
             if !app.username.is_empty() {
                 app.screen = Screen::Waiting;
@@ -97,7 +100,9 @@ fn handle_auth_input(app: &mut App, key: KeyCode) {
         KeyCode::Esc => {
             app.screen = Screen::FlowSelect;
             app.username.clear();
+            app.password.clear();
             app.otp_code.clear();
+            app.active_field = 0;
         }
         _ => {}
     }
@@ -119,7 +124,9 @@ fn handle_result(app: &mut App, key: KeyCode) {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('r') => {
             app.screen = Screen::AuthInput;
+            app.password.clear();
             app.otp_code.clear();
+            app.active_field = 0;
             app.assertion_details = None;
             app.signature_validation = None;
             app.raw_xml.clear();
@@ -145,7 +152,9 @@ fn handle_error(app: &mut App, key: KeyCode) {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('r') => {
             app.screen = Screen::AuthInput;
+            app.password.clear();
             app.otp_code.clear();
+            app.active_field = 0;
             app.error_message.clear();
         }
         KeyCode::Esc => {

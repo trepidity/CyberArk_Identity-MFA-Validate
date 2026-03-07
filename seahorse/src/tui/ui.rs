@@ -123,15 +123,29 @@ fn render_flow_select(frame: &mut Frame, app: &App) {
 }
 
 fn render_auth_input(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let is_browser = app.flow_mode == Some(super::app::FlowMode::Browser);
+
+    let constraints = if is_browser {
+        vec![
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ]
+    } else {
+        vec![
+            Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(1),
             Constraint::Length(3),
-        ])
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(frame.area());
 
     let flow_name = app
@@ -162,34 +176,58 @@ fn render_auth_input(frame: &mut Frame, app: &App) {
         );
     frame.render_widget(username, chunks[1]);
 
-    let otp_style = if app.active_field == 1 {
-        Style::default().fg(Color::Yellow)
+    if is_browser {
+        let help = Paragraph::new("Enter: Submit | Esc: Back")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL));
+        frame.render_widget(help, chunks[3]);
     } else {
-        Style::default()
-    };
-    let otp_label = if app.flow_mode == Some(super::app::FlowMode::Browser) {
-        "OTP Code (optional for browser flow)"
-    } else {
-        "OTP Code"
-    };
-    let otp = Paragraph::new(app.otp_code.as_str())
-        .style(otp_style)
-        .block(
-            Block::default()
-                .title(otp_label)
-                .borders(Borders::ALL)
-                .border_style(if app.active_field == 1 {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default()
-                }),
-        );
-    frame.render_widget(otp, chunks[2]);
+        // Password field (masked)
+        let pw_style = if app.active_field == 1 {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let masked: String = "*".repeat(app.password.len());
+        let password = Paragraph::new(masked)
+            .style(pw_style)
+            .block(
+                Block::default()
+                    .title("Password")
+                    .borders(Borders::ALL)
+                    .border_style(if app.active_field == 1 {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    }),
+            );
+        frame.render_widget(password, chunks[2]);
 
-    let help = Paragraph::new("Tab: Switch Field | Enter: Submit | Esc: Back")
-        .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(help, chunks[4]);
+        // OTP field
+        let otp_style = if app.active_field == 2 {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let otp = Paragraph::new(app.otp_code.as_str())
+            .style(otp_style)
+            .block(
+                Block::default()
+                    .title("OTP Code")
+                    .borders(Borders::ALL)
+                    .border_style(if app.active_field == 2 {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default()
+                    }),
+            );
+        frame.render_widget(otp, chunks[3]);
+
+        let help = Paragraph::new("Tab: Switch Field | Enter: Submit | Esc: Back")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL));
+        frame.render_widget(help, chunks[5]);
+    }
 }
 
 fn render_waiting(frame: &mut Frame, app: &App) {
@@ -225,7 +263,7 @@ fn render_result(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(10),
-            Constraint::Length(6),
+            Constraint::Length(7),
             Constraint::Min(5),
             Constraint::Length(3),
         ])
@@ -315,6 +353,10 @@ fn render_result(frame: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled("Certificate: ", Style::default().fg(Color::Cyan)),
                 Span::raw(&sig.certificate_subject),
+            ]),
+            Line::from(vec![
+                Span::styled("Cert Expiry: ", Style::default().fg(Color::Cyan)),
+                Span::raw(sig.certificate_not_after.as_deref().unwrap_or("N/A")),
             ]),
         ]
     } else {

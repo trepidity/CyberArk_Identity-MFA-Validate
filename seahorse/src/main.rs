@@ -6,6 +6,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use tracing::{error, info};
 
 use seahorse::auth;
 use seahorse::config;
@@ -16,19 +17,16 @@ use seahorse::tui::input::handle_input;
 use seahorse::tui::ui::render;
 
 fn find_config_base_path() -> Option<PathBuf> {
-    // Check current working directory
     if let Ok(cwd) = std::env::current_dir() {
         if cwd.join("config").is_dir() {
             return Some(cwd);
         }
-        // Check parent of cwd
         if let Some(parent) = cwd.parent() {
             if parent.join("config").is_dir() {
                 return Some(parent.to_path_buf());
             }
         }
     }
-    // Check relative to executable
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
             if exe_dir.join("config").is_dir() {
@@ -44,8 +42,26 @@ fn find_config_base_path() -> Option<PathBuf> {
     None
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Setup file-based logging (seahorse.log in current directory)
+    let log_file =
+        std::fs::File::create("seahorse.log").expect("Failed to create seahorse.log");
+    tracing_subscriber::fmt()
+        .with_writer(log_file)
+        .with_ansi(false)
+        .with_target(true)
+        .with_level(true)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .init();
+
+    info!("=== Seahorse starting ===");
+    info!("Working directory: {:?}", std::env::current_dir().ok());
+
+    // Build a multi-threaded tokio runtime (for async HTTP calls)
+    // We don't use #[tokio::main] because the main thread must be free
+    // for the native webview GUI event loop (macOS requires main thread for GUI).
+    let rt = tokio::runtime::Runtime::new()?;
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -56,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
     let mut app = App::new();
     let config_base = find_config_base_path();
 
-    let result = run_app(&mut terminal, &mut app, config_base).await;
+    let result = run_app(&mut terminal, &mut app, config_base, &rt);
 
     // Restore terminal
     disable_raw_mode()?;
@@ -70,10 +86,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_app(
+fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     config_base: Option<PathBuf>,
+    rt: &tokio::runtime::Runtime,
 ) -> anyhow::Result<()> {
     while app.running {
         terminal.draw(|frame| render(frame, app))?;
@@ -82,16 +99,27 @@ async fn run_app(
         if app.screen == Screen::FlowSelect && app.config.is_none() {
             if let Some(ref base) = config_base {
                 let env = app.environment.unwrap_or(config::Environment::Prod);
+                info!("Loading config for environment: {:?}", env);
                 let config_dir = config::get_config_dir(base, env);
+                info!("Config directory: {:?}", config_dir);
                 match config::load_config(&config_dir) {
-                    Ok(cfg) => app.config = Some(cfg),
+                    Ok(cfg) => {
+                        info!("Config loaded successfully:");
+                        info!("  url: {}", cfg.url);
+                        info!("  appkey: {}", cfg.appkey);
+                        info!("  certificate: {}", cfg.certificate);
+                        info!("  timeout: {}", cfg.timeout);
+                        app.config = Some(cfg);
+                    }
                     Err(e) => {
+                        error!("Failed to load config: {}", e);
                         app.error_message = format!("Failed to load config: {}", e);
                         app.screen = Screen::Error;
                         continue;
                     }
                 }
             } else {
+                error!("Could not find config/ directory");
                 app.error_message =
                     "Could not find config/ directory. Run from the project root.".to_string();
                 app.screen = Screen::Error;
@@ -102,12 +130,15 @@ async fn run_app(
         // Run auth flow when in Waiting state
         if app.screen == Screen::Waiting {
             let flow = app.flow_mode.unwrap_or(FlowMode::RestApi);
+            info!("Starting auth flow: {:?}", flow);
+            info!("Username: {}", app.username);
+            info!("Signing mode: {:?}", app.signing_mode);
             match flow {
                 FlowMode::RestApi => {
-                    run_rest_flow(app).await;
+                    rt.block_on(run_rest_flow(app));
                 }
                 FlowMode::Browser => {
-                    run_browser_flow(app).await;
+                    run_browser_flow(terminal, app);
                 }
             }
             continue;
@@ -128,69 +159,210 @@ async fn run_rest_flow(app: &mut App) {
     let config = match app.config.clone() {
         Some(c) => c,
         None => {
+            error!("No configuration loaded");
             app.error_message = "No configuration loaded".to_string();
             app.screen = Screen::Error;
             return;
         }
     };
 
+    info!("=== REST Flow Start ===");
+    info!("Tenant: {}", config.url);
+    info!("Username: {}", app.username);
+    info!("Password length: {}", app.password.len());
+    info!("OTP length: {}", app.otp_code.len());
+
     app.status_message = "Starting authentication with CyberArk...".to_string();
 
     let client = reqwest::Client::new();
     let tenant = &config.url;
     let username = &app.username;
+    let password = &app.password;
     let otp = &app.otp_code;
 
     // Step 1: StartAuthentication
-    app.status_message = "Calling StartAuthentication...".to_string();
-    let start_result = match auth::rest_flow::start_authentication(&client, tenant, username).await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            app.error_message = format!("StartAuthentication failed: {}", e);
-            app.screen = Screen::Error;
-            return;
-        }
-    };
+    let start_url = auth::rest_flow::build_start_auth_url(tenant);
+    let start_body = auth::rest_flow::build_start_auth_body(username);
+    info!("Step 1: StartAuthentication");
+    info!("  URL: {}", start_url);
+    info!("  Request body: {}", start_body);
 
-    // Step 2: AdvanceAuthentication with OTP
-    let mechanism_id = match start_result.mechanisms.first() {
+    app.status_message = "Calling StartAuthentication...".to_string();
+    let start_result =
+        match auth::rest_flow::start_authentication(&client, tenant, username).await {
+            Ok(r) => {
+                info!("  Response: OK");
+                info!("  Resolved tenant: {}", r.tenant);
+                info!("  SessionId: {}", r.session_id);
+                info!("  Challenges count: {}", r.challenges.len());
+                for (ci, challenge) in r.challenges.iter().enumerate() {
+                    for (mi, m) in challenge.mechanisms.iter().enumerate() {
+                        info!(
+                            "  Challenge[{}].Mechanism[{}]: id={}, name={}, prompt={}",
+                            ci, mi, m.mechanism_id, m.name, m.prompt
+                        );
+                    }
+                }
+                r
+            }
+            Err(e) => {
+                error!("StartAuthentication failed: {}", e);
+                app.error_message = format!("StartAuthentication failed: {}", e);
+                app.screen = Screen::Error;
+                return;
+            }
+        };
+
+    // Use the resolved tenant (may differ from config due to PodFqdn redirect)
+    let resolved_tenant = &start_result.tenant;
+
+    // Step 2: AdvanceAuthentication — Challenge 1 (Password)
+    let password_mech = start_result
+        .challenges
+        .first()
+        .and_then(|c| c.mechanisms.iter().find(|m| m.name == "UP"));
+    let password_mech_id = match password_mech {
         Some(m) => m.mechanism_id.clone(),
         None => {
-            app.error_message = "No authentication mechanisms returned".to_string();
+            error!("No password mechanism found in Challenge 1");
+            app.error_message = "No password mechanism found in Challenge 1".to_string();
             app.screen = Screen::Error;
             return;
         }
     };
 
-    app.status_message = "Calling AdvanceAuthentication...".to_string();
-    let advance_result = match auth::rest_flow::advance_authentication(
+    info!("Step 2: AdvanceAuthentication (Password)");
+    info!("  MechanismId: {}", password_mech_id);
+
+    app.status_message = "Authenticating with password...".to_string();
+    let pw_result = match auth::rest_flow::advance_authentication(
         &client,
-        tenant,
+        resolved_tenant,
         &start_result.session_id,
-        &mechanism_id,
-        otp,
+        &password_mech_id,
+        "Answer",
+        password,
     )
     .await
     {
-        Ok(r) => r,
+        Ok(r) => {
+            info!("  Success: {}", r.success);
+            info!("  Summary: {}", r.summary);
+            r
+        }
         Err(e) => {
-            app.error_message = format!("AdvanceAuthentication failed: {}", e);
+            error!("Password authentication failed: {}", e);
+            app.error_message = format!("Password authentication failed: {}", e);
             app.screen = Screen::Error;
             return;
         }
     };
 
-    if !advance_result.success {
-        app.error_message = format!("Authentication failed: {}", advance_result.summary);
+    if !pw_result.success && pw_result.summary != "StartNextChallenge" {
+        error!("Password authentication failed: {}", pw_result.summary);
+        app.error_message = format!("Password authentication failed: {}", pw_result.summary);
         app.screen = Screen::Error;
         return;
     }
 
+    info!("Password challenge passed, moving to OTP challenge");
+
+    // Step 3: AdvanceAuthentication — Challenge 2 (OATH OTP)
+    // OATH has AnswerType "StartTextOob" which requires two calls:
+    //   1. StartOOB to select the mechanism
+    //   2. Answer with the OTP code
+    let oath_mech = start_result
+        .challenges
+        .get(1)
+        .and_then(|c| c.mechanisms.iter().find(|m| m.name == "OATH"));
+    let oath_mech_id = match oath_mech {
+        Some(m) => m.mechanism_id.clone(),
+        None => {
+            error!("No OATH mechanism found in Challenge 2");
+            app.error_message = "No OATH mechanism found in Challenge 2".to_string();
+            app.screen = Screen::Error;
+            return;
+        }
+    };
+
+    info!("Step 3a: AdvanceAuthentication (StartOOB for OATH)");
+    info!("  MechanismId: {}", oath_mech_id);
+
+    app.status_message = "Starting OATH challenge...".to_string();
+    let start_oob_result = match auth::rest_flow::advance_authentication(
+        &client,
+        resolved_tenant,
+        &start_result.session_id,
+        &oath_mech_id,
+        "StartOOB",
+        "",
+    )
+    .await
+    {
+        Ok(r) => {
+            info!("  Success: {}", r.success);
+            info!("  Summary: {}", r.summary);
+            r
+        }
+        Err(e) => {
+            error!("StartOOB failed: {}", e);
+            app.error_message = format!("StartOOB failed: {}", e);
+            app.screen = Screen::Error;
+            return;
+        }
+    };
+
+    if !start_oob_result.success {
+        error!("StartOOB failed: {}", start_oob_result.summary);
+        app.error_message = format!("StartOOB failed: {}", start_oob_result.summary);
+        app.screen = Screen::Error;
+        return;
+    }
+
+    info!("Step 3b: AdvanceAuthentication (Answer OATH OTP)");
+
+    app.status_message = "Validating OTP code...".to_string();
+    let otp_result = match auth::rest_flow::advance_authentication(
+        &client,
+        resolved_tenant,
+        &start_result.session_id,
+        &oath_mech_id,
+        "Answer",
+        otp,
+    )
+    .await
+    {
+        Ok(r) => {
+            info!("  Success: {}", r.success);
+            info!("  Summary: {}", r.summary);
+            info!("  Token present: {}", r.token.is_some());
+            r
+        }
+        Err(e) => {
+            error!("OTP authentication failed: {}", e);
+            app.error_message = format!("OTP authentication failed: {}", e);
+            app.screen = Screen::Error;
+            return;
+        }
+    };
+
+    if !otp_result.success {
+        error!("OTP authentication failed: {}", otp_result.summary);
+        app.error_message = format!("OTP authentication failed: {}", otp_result.summary);
+        app.screen = Screen::Error;
+        return;
+    }
+
+    info!("Authentication successful!");
+
     // Step 3: Build SAML assertion
+    info!("Step 3: Building SAML assertion");
     app.status_message = "Building SAML assertion...".to_string();
     let audience = "epic://epicenvironment";
     let validity_seconds = (config.timeout * 5) as i64;
+    info!("  Audience: {}", audience);
+    info!("  Validity seconds: {}", validity_seconds);
+    info!("  Signing mode: {:?}", app.signing_mode);
 
     let assertion_params = saml::builder::AssertionParams {
         issuer: config.url.clone(),
@@ -200,7 +372,7 @@ async fn run_rest_flow(app: &mut App) {
     };
 
     let assertion_xml = if app.signing_mode == SigningMode::Signed {
-        // Load certificate for signing
+        info!("  Loading PFX certificate for signing...");
         let env = app.environment.unwrap_or(config::Environment::Prod);
         let base = match find_config_base_path() {
             Some(b) => b,
@@ -260,85 +432,123 @@ async fn run_rest_flow(app: &mut App) {
     finalize_assertion(app, &assertion_xml);
 }
 
-async fn run_browser_flow(app: &mut App) {
+fn run_browser_flow(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) {
     let config = match app.config.clone() {
         Some(c) => c,
         None => {
+            error!("No configuration loaded for browser flow");
             app.error_message = "No configuration loaded".to_string();
             app.screen = Screen::Error;
             return;
         }
     };
 
-    app.status_message = "Starting ACS listener...".to_string();
+    info!("=== Browser Flow Start ===");
+    info!("Tenant: {}", config.url);
+    info!("AppKey: {}", config.appkey);
+    info!("Username: {}", app.username);
 
-    let (port_tx, port_rx) = tokio::sync::oneshot::channel::<u16>();
-    let acs_handle = tokio::spawn(async move {
-        auth::browser_flow::start_acs_listener(0, port_tx).await
-    });
-
-    let port = match port_rx.await {
-        Ok(p) => p,
-        Err(e) => {
-            app.error_message = format!("Failed to get ACS listener port: {}", e);
-            app.screen = Screen::Error;
-            return;
-        }
-    };
-
-    let _acs_url = format!("http://127.0.0.1:{}/acs", port);
     let login_url = auth::browser_flow::build_login_url(
         &config.url,
         &app.username,
         &config.appkey,
     );
+    info!("Login URL: {}", login_url);
 
-    app.status_message = format!(
-        "Browser opening...\nACS listening on port {}\nWaiting for SAMLResponse...",
-        port
-    );
+    // Exit TUI so the webview window can take focus
+    info!("Exiting TUI for webview...");
+    let _ = disable_raw_mode();
+    let _ = crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
 
-    if let Err(e) = auth::browser_flow::open_browser(&login_url) {
-        app.error_message = format!("Failed to open browser: {}", e);
-        app.screen = Screen::Error;
-        return;
-    }
-
-    // Wait for the SAMLResponse
-    let saml_body = match acs_handle.await {
-        Ok(Ok(body)) => body,
-        Ok(Err(e)) => {
-            app.error_message = format!("ACS listener error: {}", e);
-            app.screen = Screen::Error;
-            return;
+    // Run the native webview on the main thread (required for macOS)
+    let saml_b64 = match auth::browser_flow::run_webview_flow(&login_url) {
+        Ok(b64) => {
+            info!("SAMLResponse received ({} chars)", b64.len());
+            b64
         }
         Err(e) => {
-            app.error_message = format!("ACS task error: {}", e);
+            error!("Browser flow failed: {}", e);
+            // Re-enter TUI before showing error
+            let _ = enable_raw_mode();
+            let _ = crossterm::execute!(io::stdout(), EnterAlternateScreen);
+            app.error_message = format!("Browser flow failed: {}", e);
             app.screen = Screen::Error;
             return;
         }
     };
 
-    // Parse the SAML POST body
-    let parse_result = match saml::parser::parse_saml_post_body(&saml_body) {
-        Ok(r) => r,
+    // Re-enter TUI
+    info!("Re-entering TUI...");
+    let _ = enable_raw_mode();
+    let _ = crossterm::execute!(io::stdout(), EnterAlternateScreen);
+
+    // The IPC gives us the raw base64-encoded SAMLResponse value.
+    // Decode it to get the XML, then extract the assertion.
+    info!("Decoding SAMLResponse...");
+    let xml_bytes = match base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &saml_b64,
+    ) {
+        Ok(bytes) => bytes,
         Err(e) => {
-            app.error_message = format!("Failed to parse SAMLResponse: {}", e);
+            error!("Failed to base64-decode SAMLResponse: {}", e);
+            app.error_message = format!("Failed to base64-decode SAMLResponse: {}", e);
             app.screen = Screen::Error;
             return;
         }
     };
 
-    finalize_assertion(app, &parse_result.assertion_xml);
+    let response_xml = match String::from_utf8(xml_bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("SAMLResponse is not valid UTF-8: {}", e);
+            app.error_message = format!("SAMLResponse is not valid UTF-8: {}", e);
+            app.screen = Screen::Error;
+            return;
+        }
+    };
+
+    info!("SAMLResponse XML length: {}", response_xml.len());
+    info!("SAMLResponse XML:\n{}", &response_xml[..response_xml.len().min(1000)]);
+
+    // Extract the <Assertion> from the <saml2p:Response>
+    let assertion_xml = match saml::parser::extract_assertion_from_response(&response_xml) {
+        Ok(xml) => xml,
+        Err(e) => {
+            error!("Failed to extract assertion from response: {}", e);
+            app.error_message = format!("Failed to extract assertion: {}", e);
+            app.screen = Screen::Error;
+            return;
+        }
+    };
+
+    finalize_assertion(app, &assertion_xml);
 }
 
 fn finalize_assertion(app: &mut App, assertion_xml: &str) {
+    info!("=== Finalizing Assertion ===");
+    info!("Assertion XML length: {}", assertion_xml.len());
+    info!("Assertion XML:\n{}", assertion_xml);
+
     // Extract details
+    info!("Extracting assertion details...");
     match saml::parser::extract_assertion_details(assertion_xml) {
         Ok(details) => {
+            info!("Assertion details extracted:");
+            info!("  Issuer: {}", details.issuer);
+            info!("  Subject: {}", details.subject);
+            info!("  Audience: {}", details.audience);
+            info!("  NotBefore: {:?}", details.not_before);
+            info!("  NotAfter: {:?}", details.not_after);
+            info!("  AuthnContext: {}", details.authn_context);
             app.assertion_details = Some(details);
         }
         Err(e) => {
+            error!("Failed to extract assertion details: {}", e);
             app.error_message = format!("Failed to extract assertion details: {}", e);
             app.screen = Screen::Error;
             return;
@@ -346,17 +556,25 @@ fn finalize_assertion(app: &mut App, assertion_xml: &str) {
     }
 
     // Validate signature
+    info!("Validating assertion signature...");
     match saml::validator::validate_assertion_signature(assertion_xml) {
         Ok(validation) => {
+            info!("Signature validation result:");
+            info!("  Has signature: {}", validation.signature_present);
+            info!("  Signature valid: {:?}", validation.signature_valid);
+            info!("  Algorithm: {}", validation.algorithm);
+            info!("  Message: {}", validation.message);
             app.signature_validation = Some(validation);
         }
         Err(e) => {
+            error!("Signature validation error: {}", e);
             app.error_message = format!("Signature validation error: {}", e);
             app.screen = Screen::Error;
             return;
         }
     }
 
+    info!("=== Assertion finalized, showing result ===");
     app.raw_xml = assertion_xml.to_string();
     app.screen = Screen::Result;
 }

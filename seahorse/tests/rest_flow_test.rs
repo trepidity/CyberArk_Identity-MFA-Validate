@@ -9,7 +9,7 @@ fn test_start_auth_request_body() {
 #[test]
 fn test_advance_auth_request_body() {
     let body = seahorse::auth::rest_flow::build_advance_auth_body(
-        "session-123", "mech-456", "123456",
+        "session-123", "mech-456", "Answer", "123456",
     );
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed["SessionId"], "session-123");
@@ -33,10 +33,25 @@ fn test_parse_start_auth_response() {
             }]
         }
     }"#;
-    let result = seahorse::auth::rest_flow::parse_start_auth_response(json).unwrap();
+    let result = seahorse::auth::rest_flow::parse_start_auth_response(json, "tenant.example.com").unwrap();
     assert_eq!(result.session_id, "sess-abc");
-    assert_eq!(result.mechanisms.len(), 1);
-    assert_eq!(result.mechanisms[0].mechanism_id, "mech-xyz");
+    assert_eq!(result.tenant, "tenant.example.com");
+    assert_eq!(result.challenges.len(), 1);
+    assert_eq!(result.challenges[0].mechanisms.len(), 1);
+    assert_eq!(result.challenges[0].mechanisms[0].mechanism_id, "mech-xyz");
+}
+
+#[test]
+fn test_parse_start_auth_response_pod_redirect() {
+    let json = r#"{
+        "success": true,
+        "Result": {"PodFqdn": "bswh.my.idaptive.app"},
+        "Message": null
+    }"#;
+    let result = seahorse::auth::rest_flow::parse_start_auth_response(json, "aad4047.my.idaptive.app").unwrap();
+    assert_eq!(result.tenant, "bswh.my.idaptive.app");
+    assert!(result.session_id.is_empty());
+    assert!(result.challenges.is_empty());
 }
 
 #[test]

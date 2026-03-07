@@ -12,6 +12,7 @@ pub struct SignatureValidation {
     pub signature_valid: bool,
     pub certificate_found: bool,
     pub certificate_subject: String,
+    pub certificate_not_after: Option<String>,
     pub algorithm: String,
     pub message: String,
 }
@@ -67,17 +68,21 @@ pub fn validate_assertion_signature(assertion_xml: &str) -> Result<SignatureVali
             signature_valid: false,
             certificate_found: false,
             certificate_subject: String::new(),
+            certificate_not_after: None,
             algorithm: String::new(),
             message: "No signature present in assertion".to_string(),
         });
     }
 
     let cert_found = cert_b64.is_some();
-    let cert_subject = if let Some(ref b64) = cert_b64 {
+    let mut cert_subject = String::new();
+    let mut cert_not_after: Option<String> = None;
+
+    if let Some(ref b64) = cert_b64 {
         let clean = b64.replace(['\n', '\r', ' '], "");
-        match STANDARD.decode(&clean) {
-            Ok(der) => match X509::from_der(&der) {
-                Ok(cert) => cert
+        if let Ok(der) = STANDARD.decode(&clean) {
+            if let Ok(cert) = X509::from_der(&der) {
+                cert_subject = cert
                     .subject_name()
                     .entries()
                     .map(|e| {
@@ -88,14 +93,12 @@ pub fn validate_assertion_signature(assertion_xml: &str) -> Result<SignatureVali
                         )
                     })
                     .collect::<Vec<_>>()
-                    .join(", "),
-                Err(_) => "Failed to parse certificate".to_string(),
-            },
-            Err(_) => "Failed to decode certificate base64".to_string(),
+                    .join(", ");
+
+                cert_not_after = Some(cert.not_after().to_string());
+            }
         }
-    } else {
-        String::new()
-    };
+    }
 
     let sig_valid = sig_value.is_some() && cert_found;
 
@@ -104,6 +107,7 @@ pub fn validate_assertion_signature(assertion_xml: &str) -> Result<SignatureVali
         signature_valid: sig_valid,
         certificate_found: cert_found,
         certificate_subject: cert_subject,
+        certificate_not_after: cert_not_after,
         algorithm,
         message: if sig_valid {
             "Signature and certificate present".to_string()
