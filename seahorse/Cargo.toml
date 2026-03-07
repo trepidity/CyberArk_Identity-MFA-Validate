@@ -42,12 +42,11 @@ tracing-appender = "0.2"
 wry = "0.47"
 tao = "0.31"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
-
 # Utilities
 urlencoding = "2"
-
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
