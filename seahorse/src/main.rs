@@ -359,7 +359,10 @@ async fn run_rest_flow(app: &mut App) {
     app.status_message = "Building SAML assertion...".to_string();
     let audience = "epic://epicenvironment";
     let validity_seconds = (config.timeout * 5) as i64;
+    info!("=== SAML Assertion Request ===");
+    info!("  Issuer: {}", config.url);
     info!("  Audience: {}", audience);
+    info!("  Username: {}", app.username);
     info!("  Validity seconds: {}", validity_seconds);
     info!("  Signing mode: {:?}", app.signing_mode);
 
@@ -426,6 +429,11 @@ async fn run_rest_flow(app: &mut App) {
     } else {
         saml::builder::build_unsigned_assertion(&assertion_params)
     };
+
+    // Log the built assertion for troubleshooting
+    info!("=== SAML Assertion Response ===");
+    info!("  Assertion XML length: {} chars", assertion_xml.len());
+    info!("  Assertion XML:\n{}", assertion_xml);
 
     // Step 4: Parse and validate
     finalize_assertion(app, &assertion_xml);
