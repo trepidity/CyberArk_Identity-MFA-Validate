@@ -6,6 +6,11 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                // On the Result screen, Ctrl+C copies SAML to clipboard
+                if app.screen == Screen::Result {
+                    copy_to_clipboard(app);
+                    return Ok(false);
+                }
                 app.running = false;
                 return Ok(true);
             }
@@ -20,6 +25,22 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
         }
     }
     Ok(false)
+}
+
+fn copy_to_clipboard(app: &mut App) {
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => match clipboard.set_text(&app.raw_xml) {
+            Ok(_) => {
+                app.copy_status = Some("Copied to clipboard!".to_string());
+            }
+            Err(e) => {
+                app.copy_status = Some(format!("Copy failed: {}", e));
+            }
+        },
+        Err(e) => {
+            app.copy_status = Some(format!("Clipboard unavailable: {}", e));
+        }
+    }
 }
 
 fn handle_env_select(app: &mut App, key: KeyCode) {
@@ -132,6 +153,7 @@ fn handle_waiting(app: &mut App, key: KeyCode) {
 fn handle_result(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
+        KeyCode::Char('c') => copy_to_clipboard(app),
         KeyCode::Char('r') => {
             app.screen = Screen::AuthInput;
             app.password.clear();
@@ -141,6 +163,7 @@ fn handle_result(app: &mut App, key: KeyCode) {
             app.signature_validation = None;
             app.raw_xml.clear();
             app.scroll_offset = 0;
+            app.copy_status = None;
         }
         KeyCode::Up => {
             if app.scroll_offset > 0 {
@@ -152,6 +175,7 @@ fn handle_result(app: &mut App, key: KeyCode) {
         }
         KeyCode::Esc => {
             app.screen = Screen::FlowSelect;
+            app.copy_status = None;
         }
         _ => {}
     }

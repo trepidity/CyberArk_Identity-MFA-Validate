@@ -3,6 +3,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::Writer;
 
 #[derive(Debug, Clone)]
 pub struct SamlParseResult {
@@ -127,4 +128,26 @@ pub fn extract_assertion_details(assertion_xml: &str) -> Result<AssertionDetails
     }
 
     Ok(details)
+}
+
+/// Pretty-prints XML with indentation for human readability.
+pub fn pretty_print_xml(xml: &str) -> String {
+    let mut reader = Reader::from_str(xml);
+    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Eof) => break,
+            Ok(event) => {
+                if writer.write_event(event).is_err() {
+                    return xml.to_string();
+                }
+            }
+            Err(_) => return xml.to_string(),
+        }
+        buf.clear();
+    }
+
+    String::from_utf8(writer.into_inner()).unwrap_or_else(|_| xml.to_string())
 }

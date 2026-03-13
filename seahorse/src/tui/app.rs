@@ -53,6 +53,7 @@ pub struct App {
     pub raw_xml: String,
     pub scroll_offset: u16,
     pub error_message: String,
+    pub copy_status: Option<String>,
 }
 
 impl Default for App {
@@ -83,6 +84,7 @@ impl App {
             raw_xml: String::new(),
             scroll_offset: 0,
             error_message: String::new(),
+            copy_status: None,
         }
     }
 
