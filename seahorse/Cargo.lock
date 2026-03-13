@@ -2941,6 +2941,7 @@ dependencies = [
  "base64",
  "chrono",
  "crossterm",
+ "flate2",
  "objc",
  "openssl",
  "quick-xml",

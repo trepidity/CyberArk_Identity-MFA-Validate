@@ -1,13 +1,22 @@
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
-use super::app::{App, Screen};
+use super::app::{App, SamlInputMode, Screen};
 
 pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
-        if let Event::Key(key) = event::read()? {
+        let ev = event::read()?;
+
+        // Handle bracketed paste events (for SamlInput paste mode)
+        if let Event::Paste(ref text) = ev {
+            if app.screen == Screen::SamlInput && app.saml_input_mode == SamlInputMode::Paste {
+                app.saml_paste_buffer.push_str(text);
+            }
+            return Ok(false);
+        }
+
+        if let Event::Key(key) = ev {
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                // On the Result screen, Ctrl+C copies SAML to clipboard
-                if app.screen == Screen::Result {
+                if app.screen == Screen::Result || app.screen == Screen::SamlView {
                     copy_to_clipboard(app);
                     return Ok(false);
                 }
@@ -21,6 +30,8 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
                 Screen::Waiting => handle_waiting(app, key.code),
                 Screen::Result => handle_result(app, key.code),
                 Screen::Error => handle_error(app, key.code),
+                Screen::SamlInput => handle_saml_input(app, key.code),
+                Screen::SamlView => handle_saml_view(app, key.code),
             }
         }
     }
@@ -28,17 +39,37 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
 }
 
 fn copy_to_clipboard(app: &mut App) {
+    let xml = if app.screen == Screen::SamlView {
+        &app.viewer_pretty_xml
+    } else {
+        &app.raw_xml
+    };
     match arboard::Clipboard::new() {
-        Ok(mut clipboard) => match clipboard.set_text(&app.raw_xml) {
+        Ok(mut clipboard) => match clipboard.set_text(xml) {
             Ok(_) => {
-                app.copy_status = Some("Copied to clipboard!".to_string());
+                let status = Some("Copied to clipboard!".to_string());
+                if app.screen == Screen::SamlView {
+                    app.viewer_copy_status = status;
+                } else {
+                    app.copy_status = status;
+                }
             }
             Err(e) => {
-                app.copy_status = Some(format!("Copy failed: {}", e));
+                let status = Some(format!("Copy failed: {}", e));
+                if app.screen == Screen::SamlView {
+                    app.viewer_copy_status = status;
+                } else {
+                    app.copy_status = status;
+                }
             }
         },
         Err(e) => {
-            app.copy_status = Some(format!("Clipboard unavailable: {}", e));
+            let status = Some(format!("Clipboard unavailable: {}", e));
+            if app.screen == Screen::SamlView {
+                app.viewer_copy_status = status;
+            } else {
+                app.copy_status = status;
+            }
         }
     }
 }
@@ -51,13 +82,17 @@ fn handle_env_select(app: &mut App, key: KeyCode) {
             }
         }
         KeyCode::Down => {
-            if app.env_selection < 1 {
+            if app.env_selection < 2 {
                 app.env_selection += 1;
             }
         }
         KeyCode::Enter => {
-            app.environment = Some(app.get_selected_env());
-            app.screen = Screen::FlowSelect;
+            if app.env_selection == 2 {
+                app.screen = Screen::SamlInput;
+            } else {
+                app.environment = Some(app.get_selected_env());
+                app.screen = Screen::FlowSelect;
+            }
         }
         KeyCode::Char('q') => app.running = false,
         _ => {}
@@ -185,15 +220,143 @@ fn handle_error(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('r') => {
-            app.screen = Screen::AuthInput;
-            app.password.clear();
-            app.otp_code.clear();
-            app.active_field = 0;
+            let go_to_saml = app.flow_mode.is_none() && app.environment.is_none();
+            if go_to_saml {
+                app.screen = Screen::SamlInput;
+            } else {
+                app.screen = Screen::AuthInput;
+                app.password.clear();
+                app.otp_code.clear();
+                app.active_field = 0;
+            }
             app.error_message.clear();
         }
         KeyCode::Esc => {
-            app.screen = Screen::FlowSelect;
+            let go_to_saml = app.flow_mode.is_none() && app.environment.is_none();
+            if go_to_saml {
+                app.screen = Screen::SamlInput;
+            } else {
+                app.screen = Screen::FlowSelect;
+            }
             app.error_message.clear();
+        }
+        _ => {}
+    }
+}
+
+fn handle_saml_input(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Tab => {
+            app.saml_input_mode = match app.saml_input_mode {
+                SamlInputMode::Paste => SamlInputMode::File,
+                SamlInputMode::File => SamlInputMode::Paste,
+            };
+        }
+        KeyCode::F(5) => {
+            submit_saml_input(app);
+        }
+        KeyCode::Backspace => match app.saml_input_mode {
+            SamlInputMode::Paste => {
+                app.saml_paste_buffer.pop();
+            }
+            SamlInputMode::File => {
+                app.saml_file_path.pop();
+            }
+        },
+        KeyCode::Enter => match app.saml_input_mode {
+            SamlInputMode::Paste => {
+                app.saml_paste_buffer.push('\n');
+            }
+            SamlInputMode::File => {
+                submit_saml_input(app);
+            }
+        },
+        KeyCode::Char(c) => match app.saml_input_mode {
+            SamlInputMode::Paste => app.saml_paste_buffer.push(c),
+            SamlInputMode::File => app.saml_file_path.push(c),
+        },
+        KeyCode::Esc => {
+            app.screen = Screen::EnvSelect;
+            app.saml_paste_buffer.clear();
+            app.saml_file_path.clear();
+        }
+        _ => {}
+    }
+}
+
+fn submit_saml_input(app: &mut App) {
+    let input = match app.saml_input_mode {
+        SamlInputMode::Paste => app.saml_paste_buffer.clone(),
+        SamlInputMode::File => {
+            let path = expand_tilde(&app.saml_file_path);
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    if content.len() > 1_048_576 {
+                        app.error_message = "File exceeds 1MB size limit".to_string();
+                        app.screen = Screen::Error;
+                        return;
+                    }
+                    content
+                }
+                Err(e) => {
+                    app.error_message = format!("Failed to read file: {}", e);
+                    app.screen = Screen::Error;
+                    return;
+                }
+            }
+        }
+    };
+    if input.trim().is_empty() {
+        return;
+    }
+    if input.len() > 1_048_576 {
+        app.error_message = "Input exceeds 1MB size limit".to_string();
+        app.screen = Screen::Error;
+        return;
+    }
+    // Store input in status_message temporarily for processing in main loop
+    app.status_message = input;
+    app.screen = Screen::Waiting;
+}
+
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with('~') {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+            return path.replacen('~', &home.to_string_lossy(), 1);
+        }
+    }
+    path.to_string()
+}
+
+fn handle_saml_view(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Char('q') => app.running = false,
+        KeyCode::Char('c') => copy_to_clipboard(app),
+        KeyCode::Char('r') => {
+            app.screen = Screen::SamlInput;
+            app.saml_paste_buffer.clear();
+            app.saml_file_path.clear();
+            app.decoded_saml = None;
+            app.viewer_authn_request = None;
+            app.viewer_response = None;
+            app.viewer_assertion = None;
+            app.viewer_attributes.clear();
+            app.viewer_signature = None;
+            app.viewer_pretty_xml.clear();
+            app.viewer_scroll_offset = 0;
+            app.viewer_copy_status = None;
+        }
+        KeyCode::Up => {
+            if app.viewer_scroll_offset > 0 {
+                app.viewer_scroll_offset -= 1;
+            }
+        }
+        KeyCode::Down => {
+            app.viewer_scroll_offset += 1;
+        }
+        KeyCode::Esc => {
+            app.screen = Screen::EnvSelect;
+            app.viewer_copy_status = None;
         }
         _ => {}
     }

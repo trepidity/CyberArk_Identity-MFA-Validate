@@ -32,6 +32,7 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 # Crypto
 openssl = { version = "0.10", features = ["vendored"] }
 base64 = "0.22"
+flate2 = "1"
 
 # Logging
 tracing = "0.1"

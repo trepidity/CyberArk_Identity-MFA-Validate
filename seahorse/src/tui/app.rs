@@ -1,6 +1,9 @@
 use crate::config::{Config, Environment};
-use crate::saml::parser::AssertionDetails;
+use crate::saml::decoder::DecodeResult;
+use crate::saml::parser::{AssertionDetails, AuthnRequestDetails, ResponseDetails, SamlAttribute};
 use crate::saml::validator::SignatureValidation;
+
+pub use crate::saml::decoder::SamlDocumentType as SamlDocType;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -10,6 +13,8 @@ pub enum Screen {
     Waiting,
     Result,
     Error,
+    SamlInput,
+    SamlView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,6 +38,12 @@ pub enum SigningMode {
     Unsigned,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SamlInputMode {
+    Paste,
+    File,
+}
+
 pub struct App {
     pub running: bool,
     pub screen: Screen,
@@ -54,6 +65,19 @@ pub struct App {
     pub scroll_offset: u16,
     pub error_message: String,
     pub copy_status: Option<String>,
+    // SAML Viewer state
+    pub saml_input_mode: SamlInputMode,
+    pub saml_paste_buffer: String,
+    pub saml_file_path: String,
+    pub decoded_saml: Option<DecodeResult>,
+    pub viewer_authn_request: Option<AuthnRequestDetails>,
+    pub viewer_response: Option<ResponseDetails>,
+    pub viewer_assertion: Option<AssertionDetails>,
+    pub viewer_attributes: Vec<SamlAttribute>,
+    pub viewer_signature: Option<SignatureValidation>,
+    pub viewer_pretty_xml: String,
+    pub viewer_scroll_offset: u16,
+    pub viewer_copy_status: Option<String>,
 }
 
 impl Default for App {
@@ -85,6 +109,18 @@ impl App {
             scroll_offset: 0,
             error_message: String::new(),
             copy_status: None,
+            saml_input_mode: SamlInputMode::Paste,
+            saml_paste_buffer: String::new(),
+            saml_file_path: String::new(),
+            decoded_saml: None,
+            viewer_authn_request: None,
+            viewer_response: None,
+            viewer_assertion: None,
+            viewer_attributes: Vec::new(),
+            viewer_signature: None,
+            viewer_pretty_xml: String::new(),
+            viewer_scroll_offset: 0,
+            viewer_copy_status: None,
         }
     }
 

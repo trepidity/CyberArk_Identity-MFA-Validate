@@ -64,7 +64,11 @@ fn main() -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    crossterm::execute!(stdout, EnterAlternateScreen)?;
+    crossterm::execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -75,7 +79,11 @@ fn main() -> anyhow::Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
-    crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    crossterm::execute!(
+        terminal.backend_mut(),
+        crossterm::event::DisableBracketedPaste,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
 
     if let Err(e) = result {
@@ -124,6 +132,12 @@ fn run_app(
                 app.screen = Screen::Error;
                 continue;
             }
+        }
+
+        // Decode SAML input when in Waiting state from SamlInput (no auth flow selected)
+        if app.screen == Screen::Waiting && app.flow_mode.is_none() && app.environment.is_none() {
+            process_saml_viewer_input(app);
+            continue;
         }
 
         // Run auth flow when in Waiting state
@@ -578,4 +592,62 @@ fn finalize_assertion(app: &mut App, assertion_xml: &str) {
     info!("=== Assertion finalized, showing result ===");
     app.raw_xml = saml::parser::pretty_print_xml(assertion_xml);
     app.screen = Screen::Result;
+}
+
+fn process_saml_viewer_input(app: &mut App) {
+    let input = std::mem::take(&mut app.status_message);
+
+    match saml::decoder::decode_saml_input(&input) {
+        Ok(result) => {
+            app.viewer_pretty_xml = saml::parser::pretty_print_xml(&result.xml);
+
+            match result.document_type {
+                saml::decoder::SamlDocumentType::AuthnRequest => {
+                    if let Ok(details) = saml::parser::extract_authn_request_details(&result.xml) {
+                        app.viewer_authn_request = Some(details);
+                    }
+                }
+                saml::decoder::SamlDocumentType::Response => {
+                    if let Ok(details) = saml::parser::extract_response_details(&result.xml) {
+                        app.viewer_response = Some(details);
+                    }
+                    if let Ok(assertion_xml) =
+                        saml::parser::extract_assertion_from_response(&result.xml)
+                    {
+                        if let Ok(details) =
+                            saml::parser::extract_assertion_details(&assertion_xml)
+                        {
+                            app.viewer_assertion = Some(details);
+                        }
+                        if let Ok(attrs) = saml::parser::extract_attributes(&assertion_xml) {
+                            app.viewer_attributes = attrs;
+                        }
+                        if let Ok(sig) =
+                            saml::validator::validate_assertion_signature(&assertion_xml)
+                        {
+                            app.viewer_signature = Some(sig);
+                        }
+                    }
+                }
+                saml::decoder::SamlDocumentType::Assertion => {
+                    if let Ok(details) = saml::parser::extract_assertion_details(&result.xml) {
+                        app.viewer_assertion = Some(details);
+                    }
+                    if let Ok(attrs) = saml::parser::extract_attributes(&result.xml) {
+                        app.viewer_attributes = attrs;
+                    }
+                    if let Ok(sig) = saml::validator::validate_assertion_signature(&result.xml) {
+                        app.viewer_signature = Some(sig);
+                    }
+                }
+            }
+
+            app.decoded_saml = Some(result);
+            app.screen = Screen::SamlView;
+        }
+        Err(e) => {
+            app.error_message = format!("Failed to decode SAML: {}", e);
+            app.screen = Screen::Error;
+        }
+    }
 }
