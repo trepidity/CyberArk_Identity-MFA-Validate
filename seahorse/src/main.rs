@@ -576,6 +576,6 @@ fn finalize_assertion(app: &mut App, assertion_xml: &str) {
     }
 
     info!("=== Assertion finalized, showing result ===");
-    app.raw_xml = assertion_xml.to_string();
+    app.raw_xml = saml::parser::pretty_print_xml(assertion_xml);
     app.screen = Screen::Result;
 }

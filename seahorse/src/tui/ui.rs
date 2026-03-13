@@ -380,17 +380,23 @@ fn render_result(frame: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
     frame.render_widget(sig_widget, chunks[2]);
 
-    // Raw XML (scrollable)
+    // Raw XML (scrollable, pretty-printed)
     let xml_paragraph = Paragraph::new(app.raw_xml.as_str())
-        .block(Block::default().title("Raw XML").borders(Borders::ALL))
+        .block(Block::default().title("SAML Response (formatted)").borders(Borders::ALL))
         .wrap(Wrap { trim: false })
         .scroll((app.scroll_offset, 0));
     frame.render_widget(xml_paragraph, chunks[3]);
 
-    let help =
-        Paragraph::new("Up/Down: Scroll XML | r: Retry | Esc: Back to Flow Select | q: Quit")
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default().borders(Borders::ALL));
+    let copy_indicator = match &app.copy_status {
+        Some(msg) => format!(" | {}", msg),
+        None => String::new(),
+    };
+    let help = Paragraph::new(format!(
+        "Up/Down: Scroll | c/Ctrl+C: Copy SAML | r: Retry | Esc: Back | q: Quit{}",
+        copy_indicator
+    ))
+    .style(Style::default().fg(Color::DarkGray))
+    .block(Block::default().borders(Borders::ALL));
     frame.render_widget(help, chunks[4]);
 }
 
