@@ -54,8 +54,8 @@ pub fn decode_saml_input(input: &str) -> Result<DecodeResult> {
     };
 
     // Step 5: UTF-8 conversion
-    let xml =
-        String::from_utf8(xml_bytes).map_err(|_| anyhow::anyhow!("Decoded data is not valid UTF-8"))?;
+    let xml = String::from_utf8(xml_bytes)
+        .map_err(|_| anyhow::anyhow!("Decoded data is not valid UTF-8"))?;
 
     // Step 6-7: XML validation and type detection
     match try_parse_xml(&xml) {

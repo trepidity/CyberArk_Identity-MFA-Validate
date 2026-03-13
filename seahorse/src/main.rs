@@ -614,8 +614,7 @@ fn process_saml_viewer_input(app: &mut App) {
                     if let Ok(assertion_xml) =
                         saml::parser::extract_assertion_from_response(&result.xml)
                     {
-                        if let Ok(details) =
-                            saml::parser::extract_assertion_details(&assertion_xml)
+                        if let Ok(details) = saml::parser::extract_assertion_details(&assertion_xml)
                         {
                             app.viewer_assertion = Some(details);
                         }
