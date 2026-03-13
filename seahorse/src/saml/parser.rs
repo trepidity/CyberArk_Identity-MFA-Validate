@@ -181,8 +181,7 @@ pub fn extract_authn_request_details(xml: &str) -> Result<AuthnRequestDetails> {
                                 "ID" => details.id = val,
                                 "IssueInstant" => details.issue_instant = val,
                                 "Destination" => details.destination = Some(val),
-                                "AssertionConsumerServiceURL"
-                                | "AssertionConsumerServiceUrl" => {
+                                "AssertionConsumerServiceURL" | "AssertionConsumerServiceUrl" => {
                                     details.acs_url = Some(val)
                                 }
                                 "ProtocolBinding" => details.protocol_binding = Some(val),
@@ -255,8 +254,7 @@ pub fn extract_response_details(xml: &str) -> Result<ResponseDetails> {
                             let key =
                                 String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             if key == "Value" {
-                                details.status =
-                                    String::from_utf8_lossy(&attr.value).to_string();
+                                details.status = String::from_utf8_lossy(&attr.value).to_string();
                             }
                         }
                     }
@@ -270,8 +268,7 @@ pub fn extract_response_details(xml: &str) -> Result<ResponseDetails> {
                         let key =
                             String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                         if key == "Value" {
-                            details.status =
-                                String::from_utf8_lossy(&attr.value).to_string();
+                            details.status = String::from_utf8_lossy(&attr.value).to_string();
                         }
                     }
                 }

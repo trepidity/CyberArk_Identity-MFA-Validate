@@ -509,14 +509,12 @@ fn render_saml_input(frame: &mut Frame, app: &App) {
             } else {
                 Style::default()
             };
-            let input = Paragraph::new(display)
-                .style(style)
-                .block(
-                    Block::default()
-                        .title("File Path")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::Yellow)),
-                );
+            let input = Paragraph::new(display).style(style).block(
+                Block::default()
+                    .title("File Path")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            );
             frame.render_widget(input, chunks[2]);
         }
     }
@@ -558,7 +556,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     let sig_height: u16 = if has_sig { 7 } else { 0 };
 
     let mut constraints = vec![
-        Constraint::Length(3),            // title
+        Constraint::Length(3),              // title
         Constraint::Length(details_height), // details
     ];
     if has_attrs {
@@ -599,11 +597,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     // Details panel
     let details_text = build_viewer_details(app);
     let details = Paragraph::new(details_text)
-        .block(
-            Block::default()
-                .title("Details")
-                .borders(Borders::ALL),
-        )
+        .block(Block::default().title("Details").borders(Borders::ALL))
         .wrap(Wrap { trim: false });
     frame.render_widget(details, chunks[chunk_idx]);
     chunk_idx += 1;
@@ -622,11 +616,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
             })
             .collect();
         let attrs = Paragraph::new(attr_lines)
-            .block(
-                Block::default()
-                    .title("Attributes")
-                    .borders(Borders::ALL),
-            )
+            .block(Block::default().title("Attributes").borders(Borders::ALL))
             .wrap(Wrap { trim: false });
         frame.render_widget(attrs, chunks[chunk_idx]);
         chunk_idx += 1;
@@ -779,11 +769,7 @@ fn build_viewer_details<'a>(app: &'a App) -> Vec<Line<'a>> {
         ));
         lines.push(detail_line(
             "Signed:          ",
-            if assertion.has_signature {
-                "Yes"
-            } else {
-                "No"
-            },
+            if assertion.has_signature { "Yes" } else { "No" },
         ));
     }
 

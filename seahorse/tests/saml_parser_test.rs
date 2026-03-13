@@ -46,12 +46,24 @@ fn test_extract_authn_request_details() {
     assert_eq!(details.id, "_abc123");
     assert_eq!(details.issue_instant, "2026-01-01T00:00:00Z");
     assert_eq!(details.issuer, "https://sp.example.com");
-    assert_eq!(details.destination.as_deref(), Some("https://idp.example.com/sso"));
-    assert_eq!(details.acs_url.as_deref(), Some("https://sp.example.com/acs"));
-    assert_eq!(details.protocol_binding.as_deref(), Some("urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"));
+    assert_eq!(
+        details.destination.as_deref(),
+        Some("https://idp.example.com/sso")
+    );
+    assert_eq!(
+        details.acs_url.as_deref(),
+        Some("https://sp.example.com/acs")
+    );
+    assert_eq!(
+        details.protocol_binding.as_deref(),
+        Some("urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST")
+    );
     assert_eq!(details.force_authn, Some(true));
     assert_eq!(details.is_passive, None);
-    assert_eq!(details.name_id_policy.as_deref(), Some("urn:oasis:names:tc:SAML:2.0:nameid-format:transient"));
+    assert_eq!(
+        details.name_id_policy.as_deref(),
+        Some("urn:oasis:names:tc:SAML:2.0:nameid-format:transient")
+    );
 }
 
 #[test]
@@ -62,7 +74,10 @@ fn test_extract_response_details() {
     assert_eq!(details.id, "_resp1");
     assert_eq!(details.issue_instant, "2026-01-01T00:00:00Z");
     assert_eq!(details.issuer, "https://idp.example.com");
-    assert_eq!(details.destination.as_deref(), Some("https://sp.example.com/acs"));
+    assert_eq!(
+        details.destination.as_deref(),
+        Some("https://sp.example.com/acs")
+    );
     assert_eq!(details.in_response_to.as_deref(), Some("_req1"));
     assert!(details.status.contains("Success"));
 }
