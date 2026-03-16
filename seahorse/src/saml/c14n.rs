@@ -415,3 +415,267 @@ pub fn canonicalize_exclusive(xml: &str, inclusive_ns_prefixes: &[&str]) -> Resu
 
     Ok(output)
 }
+
+/// Extracts the `<SignedInfo>` element from a SAML assertion XML string.
+///
+/// Parses the full assertion, tracking namespace declarations on ancestors
+/// (`<Assertion>`, `<Signature>`, etc.). When `<SignedInfo>` is found, the
+/// extracted fragment includes inherited namespace declarations that are
+/// visibly utilized, making it self-contained for canonicalization.
+///
+/// Returns the raw XML string of the `<SignedInfo>` element with inherited
+/// namespace declarations injected onto the opening tag.
+pub fn extract_signed_info(xml: &str) -> Result<String> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+
+    // Track namespace declarations from ancestor elements
+    // Each entry is a vector of (prefix, uri) pairs declared on that element
+    let mut ancestor_ns_stack: Vec<BTreeMap<String, String>> = Vec::new();
+
+    // State machine: looking for SignedInfo, then capturing it
+    let mut in_signed_info = false;
+    let mut signed_info_depth: u32 = 0;
+    let mut signed_info_raw = Vec::<u8>::new();
+    let mut signed_info_open_tag: Option<Vec<u8>> = None; // The opening <ds:SignedInfo ...> with injected ns
+    let mut found = false;
+
+    // Collect all in-scope ns declarations from ancestors when we hit SignedInfo
+    let mut inherited_ns: BTreeMap<String, String> = BTreeMap::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                let local_name = e.local_name();
+                let local = String::from_utf8_lossy(local_name.as_ref()).to_string();
+
+                if in_signed_info {
+                    // Capture raw content inside SignedInfo
+                    signed_info_raw.push(b'<');
+                    signed_info_raw.extend_from_slice(e.as_ref());
+                    signed_info_raw.push(b'>');
+                    signed_info_depth += 1;
+                } else if local == "SignedInfo" {
+                    // Found SignedInfo! Collect inherited namespaces
+                    inherited_ns.clear();
+                    for scope in &ancestor_ns_stack {
+                        for (prefix, uri) in scope {
+                            inherited_ns.insert(prefix.clone(), uri.clone());
+                        }
+                    }
+
+                    // Determine which inherited ns prefixes are needed on SignedInfo itself.
+                    // We need to look at the element name prefix and attribute prefixes.
+                    let raw_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let elem_prefix = extract_prefix(&raw_name).to_string();
+
+                    // Collect this element's own ns declarations and attributes
+                    let mut own_ns: BTreeMap<String, String> = BTreeMap::new();
+                    let mut attr_prefixes: HashSet<String> = HashSet::new();
+
+                    for attr in e.attributes().flatten() {
+                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                        if key == "xmlns" {
+                            let uri = String::from_utf8_lossy(&attr.value).to_string();
+                            own_ns.insert(String::new(), uri);
+                        } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                            let uri = String::from_utf8_lossy(&attr.value).to_string();
+                            own_ns.insert(prefix.to_string(), uri);
+                        } else {
+                            let p = extract_prefix(&key).to_string();
+                            if !p.is_empty() {
+                                attr_prefixes.insert(p);
+                            }
+                        }
+                    }
+
+                    // Build the opening tag with inherited ns declarations injected
+                    let mut open_tag = Vec::new();
+                    open_tag.push(b'<');
+                    open_tag.extend_from_slice(raw_name.as_bytes());
+
+                    // Determine which inherited ns to inject: those whose prefix
+                    // is used by this element or its attributes, and not already declared here
+                    let mut needed_prefixes: HashSet<String> = HashSet::new();
+                    if !elem_prefix.is_empty() {
+                        needed_prefixes.insert(elem_prefix);
+                    }
+                    needed_prefixes.extend(attr_prefixes);
+
+                    // Inject inherited ns declarations for needed prefixes
+                    // (sorted by prefix for deterministic output)
+                    let mut injected: BTreeMap<String, String> = BTreeMap::new();
+                    for prefix in &needed_prefixes {
+                        if !own_ns.contains_key(prefix) {
+                            if let Some(uri) = inherited_ns.get(prefix) {
+                                injected.insert(prefix.clone(), uri.clone());
+                            }
+                        }
+                    }
+
+                    // Also check for default namespace if element uses it
+                    if needed_prefixes.contains("") && !own_ns.contains_key("") {
+                        if let Some(uri) = inherited_ns.get("") {
+                            injected.insert(String::new(), uri.clone());
+                        }
+                    }
+
+                    // Write own ns declarations (preserve from original)
+                    // Then write injected inherited ns declarations
+                    // Then write regular attributes
+                    // Note: we reconstruct the attributes in original order plus injected ns
+                    for attr in e.attributes().flatten() {
+                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                        open_tag.push(b' ');
+                        open_tag.extend_from_slice(key.as_bytes());
+                        open_tag.extend_from_slice(b"=\"");
+                        open_tag.extend_from_slice(&attr.value);
+                        open_tag.push(b'"');
+                    }
+
+                    // Now inject inherited ns declarations
+                    if let Some(uri) = injected.get("") {
+                        open_tag.extend_from_slice(b" xmlns=\"");
+                        open_tag.extend_from_slice(uri.as_bytes());
+                        open_tag.push(b'"');
+                    }
+                    for (prefix, uri) in &injected {
+                        if prefix.is_empty() {
+                            continue;
+                        }
+                        open_tag.extend_from_slice(b" xmlns:");
+                        open_tag.extend_from_slice(prefix.as_bytes());
+                        open_tag.extend_from_slice(b"=\"");
+                        open_tag.extend_from_slice(uri.as_bytes());
+                        open_tag.push(b'"');
+                    }
+
+                    open_tag.push(b'>');
+                    signed_info_open_tag = Some(open_tag);
+                    in_signed_info = true;
+                    signed_info_depth = 1;
+                    found = true;
+                } else {
+                    // Track namespace declarations on this ancestor element
+                    let mut ns_decls: BTreeMap<String, String> = BTreeMap::new();
+                    for attr in e.attributes().flatten() {
+                        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                        if key == "xmlns" {
+                            let uri = String::from_utf8_lossy(&attr.value).to_string();
+                            ns_decls.insert(String::new(), uri);
+                        } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                            let uri = String::from_utf8_lossy(&attr.value).to_string();
+                            ns_decls.insert(prefix.to_string(), uri);
+                        }
+                    }
+                    ancestor_ns_stack.push(ns_decls);
+                }
+            }
+            Ok(Event::Empty(ref e)) => {
+                if in_signed_info {
+                    signed_info_raw.push(b'<');
+                    signed_info_raw.extend_from_slice(e.as_ref());
+                    signed_info_raw.push(b'/');
+                    signed_info_raw.push(b'>');
+                } else {
+                    let local_name = e.local_name();
+                    let local = String::from_utf8_lossy(local_name.as_ref()).to_string();
+                    if local == "SignedInfo" {
+                        // Empty SignedInfo -- unusual but handle it
+                        // Collect inherited ns
+                        inherited_ns.clear();
+                        for scope in &ancestor_ns_stack {
+                            for (prefix, uri) in scope {
+                                inherited_ns.insert(prefix.clone(), uri.clone());
+                            }
+                        }
+                        let raw_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                        let elem_prefix = extract_prefix(&raw_name).to_string();
+
+                        let mut result = String::from("<");
+                        result.push_str(&raw_name);
+
+                        // Copy existing attributes
+                        for attr in e.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let val = String::from_utf8_lossy(&attr.value);
+                            result.push(' ');
+                            result.push_str(&key);
+                            result.push_str("=\"");
+                            result.push_str(&val);
+                            result.push('"');
+                        }
+
+                        // Inject inherited ns for element prefix if needed
+                        if !elem_prefix.is_empty() {
+                            let has_own = e.attributes().flatten().any(|a| {
+                                let k = String::from_utf8_lossy(a.key.as_ref());
+                                k == format!("xmlns:{}", elem_prefix)
+                            });
+                            if !has_own {
+                                if let Some(uri) = inherited_ns.get(&elem_prefix) {
+                                    result.push_str(&format!(" xmlns:{}=\"{}\"", elem_prefix, uri));
+                                }
+                            }
+                        }
+
+                        result.push_str("/>");
+                        return Ok(result);
+                    }
+                    // Not SignedInfo, still an ancestor -- push empty ns scope
+                    // (Empty elements don't add to ancestor stack since they have no children)
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                if in_signed_info {
+                    signed_info_depth -= 1;
+                    let name_ref = e.name();
+                    let raw_name = String::from_utf8_lossy(name_ref.as_ref());
+                    if signed_info_depth == 0 {
+                        // We've captured all of SignedInfo's content
+                        let mut result = Vec::new();
+                        if let Some(open) = signed_info_open_tag.take() {
+                            result.extend_from_slice(&open);
+                        }
+                        result.extend_from_slice(&signed_info_raw);
+                        result.extend_from_slice(b"</");
+                        result.extend_from_slice(raw_name.as_bytes());
+                        result.push(b'>');
+                        return Ok(String::from_utf8(result)?);
+                    } else {
+                        signed_info_raw.extend_from_slice(b"</");
+                        signed_info_raw.extend_from_slice(raw_name.as_bytes());
+                        signed_info_raw.push(b'>');
+                    }
+                } else {
+                    ancestor_ns_stack.pop();
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                if in_signed_info {
+                    // Preserve raw text bytes
+                    signed_info_raw.extend_from_slice(e.as_ref());
+                }
+            }
+            Ok(Event::CData(ref e)) => {
+                if in_signed_info {
+                    signed_info_raw.extend_from_slice(b"<![CDATA[");
+                    signed_info_raw.extend_from_slice(e.as_ref());
+                    signed_info_raw.extend_from_slice(b"]]>");
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {} // Skip Decl, Comment, PI, DocType
+            Err(e) => bail!("XML parse error in extract_signed_info: {}", e),
+        }
+        buf.clear();
+    }
+
+    if !found {
+        bail!("No SignedInfo element found in the XML");
+    }
+
+    // Should not reach here if found was true (we return inside the End handler)
+    bail!("SignedInfo element was not properly closed");
+}

@@ -47,7 +47,11 @@ fn test_c14n_namespace_visibly_utilized() {
     let xml = r#"<root xmlns:a="urn:a" xmlns:b="urn:b"><a:child>text</a:child></root>"#;
     let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
     let output = String::from_utf8(result).unwrap();
-    assert!(output.contains(r#"<a:child xmlns:a="urn:a">"#), "Got: {}", output);
+    assert!(
+        output.contains(r#"<a:child xmlns:a="urn:a">"#),
+        "Got: {}",
+        output
+    );
 }
 
 #[test]
@@ -81,4 +85,27 @@ fn test_c14n_inclusive_ns_prefixes() {
     let result = c14n::canonicalize_exclusive(xml, &["a"]).unwrap();
     let output = String::from_utf8(result).unwrap();
     assert!(output.contains(r#"xmlns:a="urn:a""#), "Got: {}", output);
+}
+
+// --- Task 4: extract_signed_info tests ---
+
+#[test]
+fn test_extract_signed_info_with_inherited_ns() {
+    let xml = r##"<saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion"><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#_123"><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>abc</ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue>sig</ds:SignatureValue></ds:Signature></saml2:Assertion>"##;
+    let result = c14n::extract_signed_info(xml).unwrap();
+    assert!(
+        result.contains("xmlns:ds="),
+        "Missing xmlns:ds in: {}",
+        result
+    );
+    assert!(result.contains("ds:SignedInfo"), "Got: {}", result);
+    assert!(result.contains("ds:DigestValue"), "Got: {}", result);
+    assert!(!result.contains("SignatureValue"), "Got: {}", result);
+}
+
+#[test]
+fn test_extract_signed_info_no_signed_info() {
+    let xml = r#"<Assertion><Subject>user</Subject></Assertion>"#;
+    let result = c14n::extract_signed_info(xml);
+    assert!(result.is_err());
 }
