@@ -70,3 +70,29 @@ fn test_check_conditions_expired() {
     let result = seahorse::saml::validator::check_time_conditions(Some(&past), Some(&also_past));
     assert!(result.is_err());
 }
+
+#[test]
+fn test_validation_summary_display() {
+    assert_eq!(
+        seahorse::saml::validator::ValidationSummary::Trusted.message(),
+        "Signature verified against configured IDP certificate"
+    );
+    assert_eq!(
+        seahorse::saml::validator::ValidationSummary::Unsigned.message(),
+        "No signature present in assertion"
+    );
+}
+
+#[test]
+fn test_validation_report_builder() {
+    let report = seahorse::saml::validator::ValidationReport {
+        summary: seahorse::saml::validator::ValidationSummary::Unsigned,
+        checks: vec![],
+        idp_cert_loaded: false,
+        algorithm: String::new(),
+        cert_subject: String::new(),
+        cert_not_after: None,
+    };
+    assert!(!report.idp_cert_loaded);
+    assert!(report.checks.is_empty());
+}

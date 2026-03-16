@@ -6,6 +6,49 @@ use openssl::x509::X509;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+// --- New validation data model (Task 1) ---
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValidationSummary {
+    Trusted,
+    Valid,
+    Partial,
+    Failed,
+    Unsigned,
+}
+
+impl ValidationSummary {
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::Trusted => "Signature verified against configured IDP certificate",
+            Self::Valid => "Signature cryptographically valid (no IDP certificate configured)",
+            Self::Partial => "Validation incomplete — see details",
+            Self::Failed => "Signature verification FAILED",
+            Self::Unsigned => "No signature present in assertion",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationReport {
+    pub summary: ValidationSummary,
+    pub checks: Vec<ValidationCheck>,
+    pub idp_cert_loaded: bool,
+    pub algorithm: String,
+    pub cert_subject: String,
+    pub cert_not_after: Option<String>,
+}
+
+// --- Existing types ---
+
 #[derive(Debug)]
 pub struct SignatureValidation {
     pub signature_present: bool,
