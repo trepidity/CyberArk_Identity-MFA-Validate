@@ -23,3 +23,62 @@ fn test_remove_signature_no_signature() {
     let result = c14n::remove_signature_element(xml).unwrap();
     assert_eq!(result, xml);
 }
+
+// --- Task 3: canonicalize_exclusive tests ---
+
+#[test]
+fn test_c14n_empty_element_expansion() {
+    let xml = r#"<root><empty/></root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(output.contains("<empty></empty>"), "Got: {}", output);
+}
+
+#[test]
+fn test_c14n_attribute_sorting() {
+    let xml = r#"<root z="1" a="2" m="3"></root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(output.contains(r#"a="2" m="3" z="1""#), "Got: {}", output);
+}
+
+#[test]
+fn test_c14n_namespace_visibly_utilized() {
+    let xml = r#"<root xmlns:a="urn:a" xmlns:b="urn:b"><a:child>text</a:child></root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(output.contains(r#"<a:child xmlns:a="urn:a">"#), "Got: {}", output);
+}
+
+#[test]
+fn test_c14n_no_xml_declaration() {
+    let xml = r#"<?xml version="1.0"?><root></root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(!output.contains("<?xml"), "Got: {}", output);
+    assert!(output.starts_with("<root>"), "Got: {}", output);
+}
+
+#[test]
+fn test_c14n_default_namespace() {
+    let xml = r#"<root xmlns="urn:default"><child>text</child></root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(output.contains(r#"xmlns="urn:default""#), "Got: {}", output);
+}
+
+#[test]
+fn test_c14n_entity_escaping() {
+    let xml = r#"<root attr="a&lt;b">text &amp; more</root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &[]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(output.contains("&amp;"), "Got: {}", output);
+}
+
+#[test]
+fn test_c14n_inclusive_ns_prefixes() {
+    let xml = r#"<root xmlns:a="urn:a" xmlns:b="urn:b"><child>text</child></root>"#;
+    let result = c14n::canonicalize_exclusive(xml, &["a"]).unwrap();
+    let output = String::from_utf8(result).unwrap();
+    assert!(output.contains(r#"xmlns:a="urn:a""#), "Got: {}", output);
+}
