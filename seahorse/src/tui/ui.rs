@@ -743,13 +743,11 @@ fn render_validation_panel(
         _ => Style::default().fg(Color::Yellow),
     };
 
-    let widget = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .title(Span::styled("Validation", title_style))
-                .borders(Borders::ALL),
-        )
-        .wrap(Wrap { trim: false });
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .title(Span::styled("Validation", title_style))
+            .borders(Borders::ALL),
+    );
     frame.render_widget(widget, area);
 }
 
