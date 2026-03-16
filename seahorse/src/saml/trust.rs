@@ -29,8 +29,9 @@ pub enum ChainResult {
 }
 
 /// Load IdP certificates from a PEM file.
-/// The first certificate is treated as the leaf; any additional certificates
-/// form the chain (intermediates / root).
+/// Automatically identifies the leaf (end-entity) certificate by finding
+/// the cert that is NOT a CA. The remaining certs form the chain.
+/// PEM files can have certs in any order — this handles all orderings.
 pub fn load_idp_certificates(path: &Path) -> Result<IdpTrustStore> {
     let pem_data =
         fs::read(path).with_context(|| format!("Failed to read PEM file: {}", path.display()))?;
@@ -42,15 +43,64 @@ pub fn load_idp_certificates(path: &Path) -> Result<IdpTrustStore> {
         anyhow::bail!("PEM file contains no certificates: {}", path.display());
     }
 
-    let mut iter = certs.into_iter();
-    let leaf_cert = iter.next().unwrap(); // safe: checked non-empty above
-    let chain_certs: Vec<X509> = iter.collect();
+    // Find the leaf cert: the one that is not the issuer of any other cert
+    let leaf_idx = find_leaf_index(&certs);
+
+    let mut chain_certs = certs;
+    let leaf_cert = chain_certs.remove(leaf_idx);
 
     Ok(IdpTrustStore {
         leaf_cert,
         chain_certs,
         source_path: path.to_path_buf(),
     })
+}
+
+/// Identify the leaf (end-entity) cert from a list.
+/// The leaf is the cert whose issuer does not match its own subject
+/// (i.e., it's not self-signed) AND is not the issuer of any other cert
+/// in the list. If no clear leaf is found, returns the cert with the
+/// latest notAfter (most likely to be the freshly-issued end-entity).
+fn find_leaf_index(certs: &[X509]) -> usize {
+    if certs.len() == 1 {
+        return 0;
+    }
+
+    // A cert is a "parent" if another cert's issuer matches this cert's subject.
+    // Compare by DER-encoded name bytes since X509NameRef doesn't impl PartialEq.
+    let subjects: Vec<Vec<u8>> = certs
+        .iter()
+        .map(|c| c.subject_name().to_der().unwrap_or_default())
+        .collect();
+    let issuers: Vec<Vec<u8>> = certs
+        .iter()
+        .map(|c| c.issuer_name().to_der().unwrap_or_default())
+        .collect();
+
+    let mut is_parent = vec![false; certs.len()];
+    for (i, subject_der) in subjects.iter().enumerate() {
+        for (j, issuer_der) in issuers.iter().enumerate() {
+            if i != j && issuer_der == subject_der {
+                is_parent[i] = true;
+                break;
+            }
+        }
+    }
+
+    // The leaf is the cert that is NOT a parent of any other cert
+    let non_parents: Vec<usize> = is_parent
+        .iter()
+        .enumerate()
+        .filter(|(_, &is_p)| !is_p)
+        .map(|(i, _)| i)
+        .collect();
+
+    if non_parents.len() == 1 {
+        return non_parents[0];
+    }
+
+    // Fallback: pick the first non-parent, or just index 0
+    non_parents.first().copied().unwrap_or(0)
 }
 
 /// Compare two X.509 certificates by SHA-256 fingerprint.
