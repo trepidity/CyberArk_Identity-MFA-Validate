@@ -43,3 +43,10 @@ fn test_get_pfx_path() {
     let pfx = seahorse::config::get_pfx_path(&config_dir, "mycert.pfx");
     assert_eq!(pfx, PathBuf::from("/some/path/config/TST/mycert.pfx"));
 }
+
+#[test]
+fn test_config_without_idp_certificate() {
+    let config_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let config = seahorse::config::load_config(&config_dir).unwrap();
+    assert!(config.idp_certificate.is_none());
+}

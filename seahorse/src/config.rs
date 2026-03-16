@@ -32,6 +32,8 @@ pub struct Config {
     #[serde(rename = "UseBypass")]
     pub use_bypass: bool,
     pub browser: String,
+    #[serde(default)]
+    pub idp_certificate: Option<String>,
 }
 
 pub fn load_config(config_dir: &Path) -> Result<Config> {
