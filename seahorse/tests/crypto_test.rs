@@ -38,3 +38,35 @@ fn test_cert_to_base64_der() {
     assert!(!b64.is_empty());
     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &b64).unwrap();
 }
+
+#[test]
+fn test_verify_signature_sha256() {
+    let bundle = seahorse::crypto::load_pfx(&test_pfx_path(), TEST_PFX_PASSWORD).unwrap();
+    let data = b"test data for generalized verify";
+    let signature =
+        seahorse::crypto::sign_sha256(bundle.private_key.as_ref().unwrap(), data).unwrap();
+    let valid = seahorse::crypto::verify_signature(
+        bundle.certificate.as_ref().unwrap(),
+        data,
+        &signature,
+        openssl::hash::MessageDigest::sha256(),
+    )
+    .unwrap();
+    assert!(valid);
+}
+
+#[test]
+fn test_verify_signature_wrong_data() {
+    let bundle = seahorse::crypto::load_pfx(&test_pfx_path(), TEST_PFX_PASSWORD).unwrap();
+    let data = b"original data";
+    let signature =
+        seahorse::crypto::sign_sha256(bundle.private_key.as_ref().unwrap(), data).unwrap();
+    let valid = seahorse::crypto::verify_signature(
+        bundle.certificate.as_ref().unwrap(),
+        b"tampered data",
+        &signature,
+        openssl::hash::MessageDigest::sha256(),
+    )
+    .unwrap();
+    assert!(!valid);
+}

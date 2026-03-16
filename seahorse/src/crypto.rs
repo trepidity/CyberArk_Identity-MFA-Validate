@@ -51,6 +51,20 @@ pub fn verify_sha256(cert: &X509, data: &[u8], signature: &[u8]) -> Result<bool>
         .context("Failed to verify RSA-SHA256 signature")
 }
 
+pub fn verify_signature(
+    cert: &X509,
+    data: &[u8],
+    signature: &[u8],
+    digest: MessageDigest,
+) -> Result<bool> {
+    let pub_key = cert.public_key().context("Failed to extract public key")?;
+    let mut verifier = Verifier::new(digest, &pub_key).context("Failed to create verifier")?;
+    verifier.update(data).context("Failed to update verifier")?;
+    verifier
+        .verify(signature)
+        .context("Failed to verify signature")
+}
+
 pub fn cert_to_base64_der(cert: &X509) -> Result<String> {
     let der = cert
         .to_der()
