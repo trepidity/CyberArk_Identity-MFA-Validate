@@ -1,7 +1,8 @@
 use crate::config::{Config, Environment};
 use crate::saml::decoder::DecodeResult;
 use crate::saml::parser::{AssertionDetails, AuthnRequestDetails, ResponseDetails, SamlAttribute};
-use crate::saml::validator::SignatureValidation;
+use crate::saml::trust::IdpTrustStore;
+use crate::saml::validator::ValidationReport;
 
 pub use crate::saml::decoder::SamlDocumentType as SamlDocType;
 
@@ -60,7 +61,7 @@ pub struct App {
     pub active_field: usize,
     pub status_message: String,
     pub assertion_details: Option<AssertionDetails>,
-    pub signature_validation: Option<SignatureValidation>,
+    pub signature_validation: Option<ValidationReport>,
     pub raw_xml: String,
     pub scroll_offset: u16,
     pub error_message: String,
@@ -74,10 +75,14 @@ pub struct App {
     pub viewer_response: Option<ResponseDetails>,
     pub viewer_assertion: Option<AssertionDetails>,
     pub viewer_attributes: Vec<SamlAttribute>,
-    pub viewer_signature: Option<SignatureValidation>,
+    pub viewer_signature: Option<ValidationReport>,
     pub viewer_pretty_xml: String,
     pub viewer_scroll_offset: u16,
     pub viewer_copy_status: Option<String>,
+    // IDP trust state
+    pub idp_trust_store: Option<IdpTrustStore>,
+    pub idp_cert_input: String,
+    pub idp_cert_input_active: bool,
 }
 
 impl Default for App {
@@ -121,6 +126,9 @@ impl App {
             viewer_pretty_xml: String::new(),
             viewer_scroll_offset: 0,
             viewer_copy_status: None,
+            idp_trust_store: None,
+            idp_cert_input: String::new(),
+            idp_cert_input_active: false,
         }
     }
 

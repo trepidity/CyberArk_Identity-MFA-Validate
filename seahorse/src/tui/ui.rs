@@ -4,6 +4,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
+use crate::saml::validator::{ValidationReport, ValidationSummary};
+
 use super::app::{App, SamlDocType, SamlInputMode, Screen, SigningMode};
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -273,7 +275,7 @@ fn render_result(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3),
             Constraint::Length(10),
-            Constraint::Length(7),
+            Constraint::Length(14),
             Constraint::Min(5),
             Constraint::Length(3),
         ])
@@ -337,50 +339,14 @@ fn render_result(frame: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
     frame.render_widget(details, chunks[1]);
 
-    // Signature info
-    let sig_text = if let Some(ref sig) = app.signature_validation {
-        let valid_color = if sig.signature_valid {
-            Color::Green
-        } else {
-            Color::Red
-        };
-        vec![
-            Line::from(vec![
-                Span::styled("Present:     ", Style::default().fg(Color::Cyan)),
-                Span::raw(if sig.signature_present { "Yes" } else { "No" }),
-            ]),
-            Line::from(vec![
-                Span::styled("Valid:       ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    if sig.signature_valid { "Yes" } else { "No" },
-                    Style::default().fg(valid_color),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Algorithm:   ", Style::default().fg(Color::Cyan)),
-                Span::raw(&sig.algorithm),
-            ]),
-            Line::from(vec![
-                Span::styled("Certificate: ", Style::default().fg(Color::Cyan)),
-                Span::raw(&sig.certificate_subject),
-            ]),
-            Line::from(vec![
-                Span::styled("Cert Expiry: ", Style::default().fg(Color::Cyan)),
-                Span::raw(sig.certificate_not_after.as_deref().unwrap_or("N/A")),
-            ]),
-        ]
+    // Validation panel
+    if let Some(ref report) = app.signature_validation {
+        render_validation_panel(frame, report, chunks[2]);
     } else {
-        vec![Line::from("No signature validation performed")]
-    };
-
-    let sig_widget = Paragraph::new(sig_text)
-        .block(
-            Block::default()
-                .title("Signature Info")
-                .borders(Borders::ALL),
-        )
-        .wrap(Wrap { trim: false });
-    frame.render_widget(sig_widget, chunks[2]);
+        let placeholder = Paragraph::new("No validation performed")
+            .block(Block::default().title("Validation").borders(Borders::ALL));
+        frame.render_widget(placeholder, chunks[2]);
+    }
 
     // Raw XML (scrollable, pretty-printed)
     let xml_paragraph = Paragraph::new(app.raw_xml.as_str())
@@ -393,17 +359,30 @@ fn render_result(frame: &mut Frame, app: &App) {
         .scroll((app.scroll_offset, 0));
     frame.render_widget(xml_paragraph, chunks[3]);
 
-    let copy_indicator = match &app.copy_status {
-        Some(msg) => format!(" | {}", msg),
-        None => String::new(),
-    };
-    let help = Paragraph::new(format!(
-        "Up/Down: Scroll | c/Ctrl+C: Copy SAML | r: Retry | Esc: Back | q: Quit{}",
-        copy_indicator
-    ))
-    .style(Style::default().fg(Color::DarkGray))
-    .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(help, chunks[4]);
+    // Help bar (or IDP cert input prompt)
+    let help_chunk = chunks[4];
+    if app.idp_cert_input_active {
+        let prompt = Paragraph::new(format!("IDP Certificate path: {}_", app.idp_cert_input))
+            .style(Style::default().fg(Color::Yellow))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Load IDP Certificate"),
+            );
+        frame.render_widget(prompt, help_chunk);
+    } else {
+        let copy_indicator = match &app.copy_status {
+            Some(msg) => format!(" | {}", msg),
+            None => String::new(),
+        };
+        let help = Paragraph::new(format!(
+            "Up/Down: Scroll | c/Ctrl+C: Copy SAML | i: Load IDP Cert | r: Retry | Esc: Back | q: Quit{}",
+            copy_indicator
+        ))
+        .style(Style::default().fg(Color::DarkGray))
+        .block(Block::default().borders(Borders::ALL));
+        frame.render_widget(help, help_chunk);
+    }
 }
 
 fn render_error(frame: &mut Frame, app: &App) {
@@ -553,7 +532,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     } else {
         0
     };
-    let sig_height: u16 = if has_sig { 7 } else { 0 };
+    let sig_height: u16 = if has_sig { 14 } else { 0 };
 
     let mut constraints = vec![
         Constraint::Length(3),              // title
@@ -622,47 +601,10 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
         chunk_idx += 1;
     }
 
-    // Signature panel
+    // Validation panel
     if has_sig {
-        if let Some(ref sig) = app.viewer_signature {
-            let valid_color = if sig.signature_valid {
-                Color::Green
-            } else {
-                Color::Red
-            };
-            let sig_text = vec![
-                Line::from(vec![
-                    Span::styled("Present:     ", Style::default().fg(Color::Cyan)),
-                    Span::raw(if sig.signature_present { "Yes" } else { "No" }),
-                ]),
-                Line::from(vec![
-                    Span::styled("Valid:       ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        if sig.signature_valid { "Yes" } else { "No" },
-                        Style::default().fg(valid_color),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("Algorithm:   ", Style::default().fg(Color::Cyan)),
-                    Span::raw(&sig.algorithm),
-                ]),
-                Line::from(vec![
-                    Span::styled("Certificate: ", Style::default().fg(Color::Cyan)),
-                    Span::raw(&sig.certificate_subject),
-                ]),
-                Line::from(vec![
-                    Span::styled("Cert Expiry: ", Style::default().fg(Color::Cyan)),
-                    Span::raw(sig.certificate_not_after.as_deref().unwrap_or("N/A")),
-                ]),
-            ];
-            let sig_widget = Paragraph::new(sig_text)
-                .block(
-                    Block::default()
-                        .title("Signature Info")
-                        .borders(Borders::ALL),
-                )
-                .wrap(Wrap { trim: false });
-            frame.render_widget(sig_widget, chunks[chunk_idx]);
+        if let Some(ref report) = app.viewer_signature {
+            render_validation_panel(frame, report, chunks[chunk_idx]);
         }
         chunk_idx += 1;
     }
@@ -679,18 +621,130 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     frame.render_widget(xml_paragraph, chunks[chunk_idx]);
     chunk_idx += 1;
 
-    // Help bar
-    let copy_indicator = match &app.viewer_copy_status {
-        Some(msg) => format!(" | {}", msg),
-        None => String::new(),
+    // Help bar (or IDP cert input prompt)
+    let help_chunk = chunks[chunk_idx];
+    if app.idp_cert_input_active {
+        let prompt = Paragraph::new(format!("IDP Certificate path: {}_", app.idp_cert_input))
+            .style(Style::default().fg(Color::Yellow))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Load IDP Certificate"),
+            );
+        frame.render_widget(prompt, help_chunk);
+    } else {
+        let copy_indicator = match &app.viewer_copy_status {
+            Some(msg) => format!(" | {}", msg),
+            None => String::new(),
+        };
+        let help = Paragraph::new(format!(
+            "Up/Down: Scroll | c/Ctrl+C: Copy XML | i: Load IDP Cert | r: New Input | Esc: Main Menu | q: Quit{}",
+            copy_indicator
+        ))
+        .style(Style::default().fg(Color::DarkGray))
+        .block(Block::default().borders(Borders::ALL));
+        frame.render_widget(help, help_chunk);
+    }
+}
+
+fn render_validation_panel(
+    frame: &mut Frame,
+    report: &ValidationReport,
+    area: ratatui::layout::Rect,
+) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Summary line with color-coded icon
+    let (icon, summary_color) = match report.summary {
+        ValidationSummary::Trusted => ("\u{2713} Trusted", Color::Green),
+        ValidationSummary::Valid => ("\u{2713} Valid", Color::Green),
+        ValidationSummary::Partial => ("\u{2014} Partial", Color::Yellow),
+        ValidationSummary::Failed => ("\u{2717} Failed", Color::Red),
+        ValidationSummary::Unsigned => ("\u{2014} Unsigned", Color::DarkGray),
     };
-    let help = Paragraph::new(format!(
-        "Up/Down: Scroll | c/Ctrl+C: Copy XML | r: New Input | Esc: Main Menu | q: Quit{}",
-        copy_indicator
-    ))
-    .style(Style::default().fg(Color::DarkGray))
-    .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(help, chunks[chunk_idx]);
+
+    lines.push(Line::from(vec![
+        Span::styled("Status:    ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            icon,
+            Style::default()
+                .fg(summary_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {}", report.summary.message()),
+            Style::default().fg(summary_color),
+        ),
+    ]));
+
+    // Individual checks
+    for check in &report.checks {
+        let (check_icon, check_color) = if check.passed {
+            ("\u{2713}", Color::Green)
+        } else {
+            ("\u{2717}", Color::Red)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} ", check_icon),
+                Style::default().fg(check_color),
+            ),
+            Span::styled(
+                format!("{}: ", check.name),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::raw(&check.detail),
+        ]));
+    }
+
+    // Metadata
+    if !report.algorithm.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("Algorithm: ", Style::default().fg(Color::Cyan)),
+            Span::raw(&report.algorithm),
+        ]));
+    }
+    if !report.cert_subject.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("Signer:    ", Style::default().fg(Color::Cyan)),
+            Span::raw(&report.cert_subject),
+        ]));
+    }
+    if let Some(ref expiry) = report.cert_not_after {
+        lines.push(Line::from(vec![
+            Span::styled("Expires:   ", Style::default().fg(Color::Cyan)),
+            Span::raw(expiry),
+        ]));
+    }
+    if report.idp_cert_loaded {
+        lines.push(Line::from(vec![
+            Span::styled("IDP Cert:  ", Style::default().fg(Color::Cyan)),
+            Span::styled("Loaded", Style::default().fg(Color::Green)),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("IDP Cert:  ", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                "Not loaded (press i to load)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
+    let title_style = match report.summary {
+        ValidationSummary::Trusted | ValidationSummary::Valid => Style::default().fg(Color::Green),
+        ValidationSummary::Failed => Style::default().fg(Color::Red),
+        _ => Style::default().fg(Color::Yellow),
+    };
+
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(Span::styled("Validation", title_style))
+                .borders(Borders::ALL),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, area);
 }
 
 fn build_viewer_details<'a>(app: &'a App) -> Vec<Line<'a>> {

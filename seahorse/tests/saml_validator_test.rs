@@ -30,12 +30,16 @@ fn test_validate_self_signed_assertion() {
     )
     .unwrap();
 
-    let result = seahorse::saml::validator::validate_assertion_signature(&signed_xml);
-    assert!(result.is_ok(), "Validation failed: {:?}", result.err());
-
-    let validation = result.unwrap();
-    assert!(validation.signature_present);
-    assert!(validation.certificate_found);
+    let report = seahorse::saml::validator::validate_assertion(&signed_xml, None);
+    // Should be Valid (signed, but no IDP cert to compare against)
+    assert_eq!(
+        report.summary,
+        seahorse::saml::validator::ValidationSummary::Valid,
+        "Expected Valid, got {:?}. Checks: {:?}",
+        report.summary,
+        report.checks
+    );
+    assert!(!report.cert_subject.is_empty());
 }
 
 #[test]
@@ -48,9 +52,11 @@ fn test_unsigned_assertion_no_signature() {
     };
 
     let unsigned_xml = seahorse::saml::builder::build_unsigned_assertion(&params);
-    let result = seahorse::saml::validator::validate_assertion_signature(&unsigned_xml).unwrap();
-    assert!(!result.signature_present);
-    assert!(!result.certificate_found);
+    let report = seahorse::saml::validator::validate_assertion(&unsigned_xml, None);
+    assert_eq!(
+        report.summary,
+        seahorse::saml::validator::ValidationSummary::Unsigned
+    );
 }
 
 #[test]

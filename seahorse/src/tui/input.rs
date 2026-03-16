@@ -1,6 +1,7 @@
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
 use super::app::{App, SamlInputMode, Screen};
+use crate::saml;
 
 pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
@@ -10,6 +11,48 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
         if let Event::Paste(ref text) = ev {
             if app.screen == Screen::SamlInput && app.saml_input_mode == SamlInputMode::Paste {
                 app.saml_paste_buffer.push_str(text);
+            }
+            return Ok(false);
+        }
+
+        // Handle IDP cert input mode (intercepts all key events)
+        if app.idp_cert_input_active {
+            if let Event::Key(key) = ev {
+                match key.code {
+                    KeyCode::Enter => {
+                        let path = expand_tilde(&app.idp_cert_input);
+                        match saml::trust::load_idp_certificates(std::path::Path::new(&path)) {
+                            Ok(store) => {
+                                let cn = saml::trust::cert_cn(&store.leaf_cert);
+                                let chain_count = store.chain_certs.len();
+                                app.status_message = format!(
+                                    "Loaded IDP cert: CN={} (+ {} chain cert{})",
+                                    cn,
+                                    chain_count,
+                                    if chain_count == 1 { "" } else { "s" }
+                                );
+                                app.idp_trust_store = Some(store);
+                                // Re-run validation on current assertion
+                                revalidate_current(app);
+                            }
+                            Err(e) => {
+                                app.status_message = format!("Failed to load IDP cert: {}", e);
+                            }
+                        }
+                        app.idp_cert_input_active = false;
+                    }
+                    KeyCode::Esc => {
+                        app.idp_cert_input_active = false;
+                        app.idp_cert_input.clear();
+                    }
+                    KeyCode::Backspace => {
+                        app.idp_cert_input.pop();
+                    }
+                    KeyCode::Char(c) => {
+                        app.idp_cert_input.push(c);
+                    }
+                    _ => {}
+                }
             }
             return Ok(false);
         }
@@ -189,6 +232,12 @@ fn handle_result(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') => copy_to_clipboard(app),
+        KeyCode::Char('i') => {
+            if !app.idp_cert_input_active {
+                app.idp_cert_input_active = true;
+                app.idp_cert_input.clear();
+            }
+        }
         KeyCode::Char('r') => {
             app.screen = Screen::AuthInput;
             app.password.clear();
@@ -328,10 +377,41 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
+/// Re-run validation on the currently displayed assertion after IDP cert change.
+fn revalidate_current(app: &mut App) {
+    match app.screen {
+        Screen::Result => {
+            if !app.raw_xml.is_empty() {
+                // raw_xml is pretty-printed; we need to re-parse the original
+                // But the pretty-printed XML is still valid XML, so validate it directly
+                let report =
+                    saml::validator::validate_assertion(&app.raw_xml, app.idp_trust_store.as_ref());
+                app.signature_validation = Some(report);
+            }
+        }
+        Screen::SamlView => {
+            if !app.viewer_pretty_xml.is_empty() {
+                let report = saml::validator::validate_assertion(
+                    &app.viewer_pretty_xml,
+                    app.idp_trust_store.as_ref(),
+                );
+                app.viewer_signature = Some(report);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn handle_saml_view(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') => copy_to_clipboard(app),
+        KeyCode::Char('i') => {
+            if !app.idp_cert_input_active {
+                app.idp_cert_input_active = true;
+                app.idp_cert_input.clear();
+            }
+        }
         KeyCode::Char('r') => {
             app.screen = Screen::SamlInput;
             app.saml_paste_buffer.clear();

@@ -116,6 +116,24 @@ fn run_app(
                         info!("  appkey: {}", cfg.appkey);
                         info!("  certificate: {}", cfg.certificate);
                         info!("  timeout: {}", cfg.timeout);
+                        if let Some(ref idp_cert_file) = cfg.idp_certificate {
+                            let idp_cert_path = config_dir.join(idp_cert_file);
+                            match saml::trust::load_idp_certificates(&idp_cert_path) {
+                                Ok(store) => {
+                                    info!(
+                                        "Loaded IDP certificate: CN={}",
+                                        saml::trust::cert_cn(&store.leaf_cert)
+                                    );
+                                    app.idp_trust_store = Some(store);
+                                }
+                                Err(e) => {
+                                    info!(
+                                        "Warning: Failed to load IDP certificate '{}': {}",
+                                        idp_cert_file, e
+                                    );
+                                }
+                            }
+                        }
                         app.config = Some(cfg);
                     }
                     Err(e) => {
@@ -571,23 +589,16 @@ fn finalize_assertion(app: &mut App, assertion_xml: &str) {
     }
 
     // Validate signature
-    info!("Validating assertion signature...");
-    match saml::validator::validate_assertion_signature(assertion_xml) {
-        Ok(validation) => {
-            info!("Signature validation result:");
-            info!("  Has signature: {}", validation.signature_present);
-            info!("  Signature valid: {:?}", validation.signature_valid);
-            info!("  Algorithm: {}", validation.algorithm);
-            info!("  Message: {}", validation.message);
-            app.signature_validation = Some(validation);
-        }
-        Err(e) => {
-            error!("Signature validation error: {}", e);
-            app.error_message = format!("Signature validation error: {}", e);
-            app.screen = Screen::Error;
-            return;
-        }
+    info!("Validating assertion...");
+    let report = saml::validator::validate_assertion(assertion_xml, app.idp_trust_store.as_ref());
+    info!("Validation result: {:?}", report.summary);
+    for check in &report.checks {
+        info!(
+            "  {}: {} (passed: {})",
+            check.name, check.detail, check.passed
+        );
     }
+    app.signature_validation = Some(report);
 
     info!("=== Assertion finalized, showing result ===");
     app.raw_xml = saml::parser::pretty_print_xml(assertion_xml);
@@ -621,11 +632,11 @@ fn process_saml_viewer_input(app: &mut App) {
                         if let Ok(attrs) = saml::parser::extract_attributes(&assertion_xml) {
                             app.viewer_attributes = attrs;
                         }
-                        if let Ok(sig) =
-                            saml::validator::validate_assertion_signature(&assertion_xml)
-                        {
-                            app.viewer_signature = Some(sig);
-                        }
+                        let sig = saml::validator::validate_assertion(
+                            &assertion_xml,
+                            app.idp_trust_store.as_ref(),
+                        );
+                        app.viewer_signature = Some(sig);
                     }
                 }
                 saml::decoder::SamlDocumentType::Assertion => {
@@ -635,9 +646,11 @@ fn process_saml_viewer_input(app: &mut App) {
                     if let Ok(attrs) = saml::parser::extract_attributes(&result.xml) {
                         app.viewer_attributes = attrs;
                     }
-                    if let Ok(sig) = saml::validator::validate_assertion_signature(&result.xml) {
-                        app.viewer_signature = Some(sig);
-                    }
+                    let sig = saml::validator::validate_assertion(
+                        &result.xml,
+                        app.idp_trust_store.as_ref(),
+                    );
+                    app.viewer_signature = Some(sig);
                 }
             }
 
