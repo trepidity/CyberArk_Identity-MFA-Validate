@@ -232,6 +232,7 @@ fn handle_result(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') => copy_to_clipboard(app),
+        KeyCode::Char('s') => save_raw_saml(app),
         KeyCode::Char('i') => open_idp_cert_dialog(app),
         KeyCode::Char('I') => {
             if !app.idp_cert_input_active {
@@ -247,6 +248,7 @@ fn handle_result(app: &mut App, key: KeyCode) {
             app.assertion_details = None;
             app.signature_validation = None;
             app.raw_xml.clear();
+            app.raw_xml_original.clear();
             app.scroll_offset = 0;
             app.copy_status = None;
         }
@@ -379,14 +381,15 @@ fn expand_tilde(path: &str) -> String {
 }
 
 /// Re-run validation on the currently displayed assertion after IDP cert change.
+/// Uses the original (pre-pretty-print) XML to preserve the exact bytes for digest verification.
 fn revalidate_current(app: &mut App) {
     match app.screen {
         Screen::Result => {
-            if !app.raw_xml.is_empty() {
-                // raw_xml is pretty-printed; we need to re-parse the original
-                // But the pretty-printed XML is still valid XML, so validate it directly
-                let report =
-                    saml::validator::validate_assertion(&app.raw_xml, app.idp_trust_store.as_ref());
+            if !app.raw_xml_original.is_empty() {
+                let report = saml::validator::validate_assertion(
+                    &app.raw_xml_original,
+                    app.idp_trust_store.as_ref(),
+                );
                 app.signature_validation = Some(report);
             }
         }
@@ -401,6 +404,84 @@ fn revalidate_current(app: &mut App) {
         }
         _ => {}
     }
+}
+
+/// Save the raw SAML assertion XML to a file via OS save dialog.
+/// Saves the original (pre-pretty-print) XML to preserve exact bytes for signature verification.
+fn save_raw_saml(app: &mut App) {
+    let xml = match app.screen {
+        Screen::Result => &app.raw_xml_original,
+        Screen::SamlView => &app.viewer_pretty_xml, // viewer doesn't have a separate original
+        _ => return,
+    };
+
+    if xml.is_empty() {
+        app.status_message = "No SAML data to save".to_string();
+        return;
+    }
+
+    let path = pick_save_dialog();
+
+    if let Some(path) = path {
+        match std::fs::write(&path, xml) {
+            Ok(_) => {
+                app.status_message = format!("Saved raw SAML to {}", path.display());
+            }
+            Err(e) => {
+                app.status_message = format!("Failed to save: {}", e);
+            }
+        }
+    }
+}
+
+/// macOS: use osascript to open a save dialog in a separate process.
+#[cfg(target_os = "macos")]
+fn pick_save_dialog() -> Option<std::path::PathBuf> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    let _ = disable_raw_mode();
+
+    let result = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            r#"set savePath to choose file name with prompt "Save Raw SAML Assertion" default name "assertion.xml""#,
+            "-e",
+            r#"POSIX path of savePath"#,
+        ])
+        .output();
+
+    let _ = enable_raw_mode();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path_str.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(path_str))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Non-macOS: use rfd for native save dialog.
+#[cfg(not(target_os = "macos"))]
+fn pick_save_dialog() -> Option<std::path::PathBuf> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    let _ = disable_raw_mode();
+
+    let file = rfd::FileDialog::new()
+        .set_title("Save Raw SAML Assertion")
+        .set_file_name("assertion.xml")
+        .add_filter("XML", &["xml"])
+        .add_filter("All Files", &["*"])
+        .save_file();
+
+    let _ = enable_raw_mode();
+
+    file
 }
 
 /// Open a native file dialog to browse for an IDP certificate PEM file.
@@ -489,6 +570,7 @@ fn handle_saml_view(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') => copy_to_clipboard(app),
+        KeyCode::Char('s') => save_raw_saml(app),
         KeyCode::Char('i') => open_idp_cert_dialog(app),
         KeyCode::Char('I') => {
             if !app.idp_cert_input_active {

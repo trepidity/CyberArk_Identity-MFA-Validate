@@ -601,6 +601,7 @@ fn finalize_assertion(app: &mut App, assertion_xml: &str) {
     app.signature_validation = Some(report);
 
     info!("=== Assertion finalized, showing result ===");
+    app.raw_xml_original = assertion_xml.to_string();
     app.raw_xml = saml::parser::pretty_print_xml(assertion_xml);
     app.screen = Screen::Result;
 }

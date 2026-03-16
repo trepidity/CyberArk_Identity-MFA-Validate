@@ -384,7 +384,7 @@ fn render_result(frame: &mut Frame, app: &App) {
             None => String::new(),
         };
         let help = Paragraph::new(format!(
-            "Up/Down: Scroll | c/Ctrl+C: Copy SAML | i: Browse IDP Cert | I: Type Path | r: Retry | Esc: Back | q: Quit{}",
+            "Up/Down: Scroll | c: Copy | s: Save Raw XML | i: IDP Cert | r: Retry | Esc: Back | q: Quit{}",
             copy_indicator
         ))
         .style(Style::default().fg(Color::DarkGray))
@@ -647,7 +647,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
             None => String::new(),
         };
         let help = Paragraph::new(format!(
-            "Up/Down: Scroll | c/Ctrl+C: Copy XML | i: Browse IDP Cert | I: Type Path | r: New Input | Esc: Main Menu | q: Quit{}",
+            "Up/Down: Scroll | c: Copy | s: Save Raw XML | i: IDP Cert | r: New Input | Esc: Menu | q: Quit{}",
             copy_indicator
         ))
         .style(Style::default().fg(Color::DarkGray))

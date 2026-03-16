@@ -63,6 +63,7 @@ pub struct App {
     pub assertion_details: Option<AssertionDetails>,
     pub signature_validation: Option<ValidationReport>,
     pub raw_xml: String,
+    pub raw_xml_original: String, // pre-pretty-print, for saving and re-validation
     pub scroll_offset: u16,
     pub error_message: String,
     pub copy_status: Option<String>,
@@ -111,6 +112,7 @@ impl App {
             assertion_details: None,
             signature_validation: None,
             raw_xml: String::new(),
+            raw_xml_original: String::new(),
             scroll_offset: 0,
             error_message: String::new(),
             copy_status: None,
