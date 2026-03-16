@@ -341,7 +341,7 @@ fn render_result(frame: &mut Frame, app: &App) {
 
     // Validation panel
     if let Some(ref report) = app.signature_validation {
-        render_validation_panel(frame, report, chunks[2]);
+        render_validation_panel(frame, report, chunks[2], app.idp_trust_store.as_ref());
     } else {
         let placeholder = Paragraph::new("No validation performed")
             .block(Block::default().title("Validation").borders(Borders::ALL));
@@ -376,7 +376,7 @@ fn render_result(frame: &mut Frame, app: &App) {
             None => String::new(),
         };
         let help = Paragraph::new(format!(
-            "Up/Down: Scroll | c/Ctrl+C: Copy SAML | i: Load IDP Cert | r: Retry | Esc: Back | q: Quit{}",
+            "Up/Down: Scroll | c/Ctrl+C: Copy SAML | i: Browse IDP Cert | I: Type Path | r: Retry | Esc: Back | q: Quit{}",
             copy_indicator
         ))
         .style(Style::default().fg(Color::DarkGray))
@@ -604,7 +604,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     // Validation panel
     if has_sig {
         if let Some(ref report) = app.viewer_signature {
-            render_validation_panel(frame, report, chunks[chunk_idx]);
+            render_validation_panel(frame, report, chunks[chunk_idx], app.idp_trust_store.as_ref());
         }
         chunk_idx += 1;
     }
@@ -638,7 +638,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
             None => String::new(),
         };
         let help = Paragraph::new(format!(
-            "Up/Down: Scroll | c/Ctrl+C: Copy XML | i: Load IDP Cert | r: New Input | Esc: Main Menu | q: Quit{}",
+            "Up/Down: Scroll | c/Ctrl+C: Copy XML | i: Browse IDP Cert | I: Type Path | r: New Input | Esc: Main Menu | q: Quit{}",
             copy_indicator
         ))
         .style(Style::default().fg(Color::DarkGray))
@@ -651,6 +651,7 @@ fn render_validation_panel(
     frame: &mut Frame,
     report: &ValidationReport,
     area: ratatui::layout::Rect,
+    idp_trust_store: Option<&crate::saml::trust::IdpTrustStore>,
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
@@ -716,16 +717,21 @@ fn render_validation_panel(
             Span::raw(expiry),
         ]));
     }
-    if report.idp_cert_loaded {
+    if let Some(store) = idp_trust_store {
+        let cn = crate::saml::trust::cert_cn(&store.leaf_cert);
+        let path_display = store.source_path.display().to_string();
         lines.push(Line::from(vec![
             Span::styled("IDP Cert:  ", Style::default().fg(Color::Cyan)),
-            Span::styled("Loaded", Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("CN={} ({})", cn, path_display),
+                Style::default().fg(Color::Green),
+            ),
         ]));
     } else {
         lines.push(Line::from(vec![
             Span::styled("IDP Cert:  ", Style::default().fg(Color::Cyan)),
             Span::styled(
-                "Not loaded (press i to load)",
+                "Not loaded (press i to browse, I to type path)",
                 Style::default().fg(Color::DarkGray),
             ),
         ]));

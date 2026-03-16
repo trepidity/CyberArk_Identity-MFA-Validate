@@ -232,7 +232,8 @@ fn handle_result(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') => copy_to_clipboard(app),
-        KeyCode::Char('i') => {
+        KeyCode::Char('i') => open_idp_cert_dialog(app),
+        KeyCode::Char('I') => {
             if !app.idp_cert_input_active {
                 app.idp_cert_input_active = true;
                 app.idp_cert_input.clear();
@@ -402,11 +403,50 @@ fn revalidate_current(app: &mut App) {
     }
 }
 
+/// Open a native file dialog to browse for an IDP certificate PEM file.
+/// Temporarily exits raw mode so the OS dialog can render.
+fn open_idp_cert_dialog(app: &mut App) {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    // Exit raw mode so the native dialog can work
+    let _ = disable_raw_mode();
+
+    let file = rfd::FileDialog::new()
+        .set_title("Select IDP Certificate (PEM)")
+        .add_filter("PEM Certificate", &["pem", "crt", "cer"])
+        .add_filter("All Files", &["*"])
+        .pick_file();
+
+    // Re-enter raw mode
+    let _ = enable_raw_mode();
+
+    if let Some(path) = file {
+        match saml::trust::load_idp_certificates(&path) {
+            Ok(store) => {
+                let cn = saml::trust::cert_cn(&store.leaf_cert);
+                let chain_count = store.chain_certs.len();
+                app.status_message = format!(
+                    "Loaded IDP cert: CN={} (+ {} chain cert{})",
+                    cn,
+                    chain_count,
+                    if chain_count == 1 { "" } else { "s" }
+                );
+                app.idp_trust_store = Some(store);
+                revalidate_current(app);
+            }
+            Err(e) => {
+                app.status_message = format!("Failed to load IDP cert: {}", e);
+            }
+        }
+    }
+}
+
 fn handle_saml_view(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') => app.running = false,
         KeyCode::Char('c') => copy_to_clipboard(app),
-        KeyCode::Char('i') => {
+        KeyCode::Char('i') => open_idp_cert_dialog(app),
+        KeyCode::Char('I') => {
             if !app.idp_cert_input_active {
                 app.idp_cert_input_active = true;
                 app.idp_cert_input.clear();
