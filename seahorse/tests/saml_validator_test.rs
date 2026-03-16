@@ -1,8 +1,18 @@
 use std::path::PathBuf;
 
+fn test_pfx_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-cert.pfx")
+}
+
+fn test_pem_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-idp.pem")
+}
+
+// --- Existing tests (preserved) ---
+
 #[test]
 fn test_validate_self_signed_assertion() {
-    let pfx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test-cert.pfx");
+    let pfx_path = test_pfx_path();
 
     let bundle = seahorse::crypto::load_pfx(&pfx_path, "testpassword").unwrap();
 
@@ -95,4 +105,74 @@ fn test_validation_report_builder() {
     };
     assert!(!report.idp_cert_loaded);
     assert!(report.checks.is_empty());
+}
+
+// --- New validation pipeline tests (Task 8) ---
+
+#[test]
+fn test_validate_unsigned_assertion() {
+    let params = seahorse::saml::builder::AssertionParams {
+        issuer: "https://test.example.com".to_string(),
+        audience: "epic://epicenvironment".to_string(),
+        username: "testuser".to_string(),
+        validity_seconds: 300,
+    };
+    let xml = seahorse::saml::builder::build_unsigned_assertion(&params);
+    let report = seahorse::saml::validator::validate_assertion(&xml, None);
+    assert_eq!(
+        report.summary,
+        seahorse::saml::validator::ValidationSummary::Unsigned
+    );
+}
+
+#[test]
+fn test_validate_signed_assertion_no_idp_cert() {
+    let bundle = seahorse::crypto::load_pfx(&test_pfx_path(), "testpassword").unwrap();
+    let params = seahorse::saml::builder::AssertionParams {
+        issuer: "https://test.example.com".to_string(),
+        audience: "epic://epicenvironment".to_string(),
+        username: "testuser".to_string(),
+        validity_seconds: 300,
+    };
+    let xml = seahorse::saml::builder::build_signed_assertion(
+        &params,
+        bundle.private_key.as_ref().unwrap(),
+        bundle.certificate.as_ref().unwrap(),
+    )
+    .unwrap();
+    let report = seahorse::saml::validator::validate_assertion(&xml, None);
+    assert_eq!(
+        report.summary,
+        seahorse::saml::validator::ValidationSummary::Valid,
+        "Expected Valid, got {:?}. Checks: {:?}",
+        report.summary,
+        report.checks
+    );
+}
+
+#[test]
+fn test_validate_signed_assertion_with_idp_cert() {
+    let bundle = seahorse::crypto::load_pfx(&test_pfx_path(), "testpassword").unwrap();
+    let params = seahorse::saml::builder::AssertionParams {
+        issuer: "https://test.example.com".to_string(),
+        audience: "epic://epicenvironment".to_string(),
+        username: "testuser".to_string(),
+        validity_seconds: 300,
+    };
+    let xml = seahorse::saml::builder::build_signed_assertion(
+        &params,
+        bundle.private_key.as_ref().unwrap(),
+        bundle.certificate.as_ref().unwrap(),
+    )
+    .unwrap();
+    let trust_store =
+        seahorse::saml::trust::load_idp_certificates(&test_pem_path()).unwrap();
+    let report = seahorse::saml::validator::validate_assertion(&xml, Some(&trust_store));
+    assert_eq!(
+        report.summary,
+        seahorse::saml::validator::ValidationSummary::Trusted,
+        "Expected Trusted, got {:?}. Checks: {:?}",
+        report.summary,
+        report.checks
+    );
 }
