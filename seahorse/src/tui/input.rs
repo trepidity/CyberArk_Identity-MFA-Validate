@@ -404,12 +404,27 @@ fn revalidate_current(app: &mut App) {
 }
 
 /// Open a native file dialog to browse for an IDP certificate PEM file.
-/// Temporarily exits raw mode so the OS dialog can render.
+/// Temporarily exits raw mode and ensures the platform event loop is
+/// available so the OS dialog can render without freezing.
+///
+/// On macOS, NSOpenPanel requires NSApplication to be initialized.
+/// A pure terminal app doesn't have one, so we initialize it here.
 fn open_idp_cert_dialog(app: &mut App) {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
     // Exit raw mode so the native dialog can work
     let _ = disable_raw_mode();
+
+    // macOS: ensure NSApplication is initialized (required for NSOpenPanel)
+    #[cfg(target_os = "macos")]
+    {
+        use objc::{class, msg_send, sel, sel_impl};
+        unsafe {
+            let ns_app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
+            // Activate the app so the dialog appears in front
+            let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+        }
+    }
 
     let file = rfd::FileDialog::new()
         .set_title("Select IDP Certificate (PEM)")
