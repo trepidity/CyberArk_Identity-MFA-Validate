@@ -498,9 +498,8 @@ pub fn extract_signed_info(xml: &str) -> Result<String> {
                     // Determine which inherited ns to inject: those whose prefix
                     // is used by this element or its attributes, and not already declared here
                     let mut needed_prefixes: HashSet<String> = HashSet::new();
-                    if !elem_prefix.is_empty() {
-                        needed_prefixes.insert(elem_prefix);
-                    }
+                    // An unprefixed element uses the default namespace (empty prefix)
+                    needed_prefixes.insert(elem_prefix);
                     needed_prefixes.extend(attr_prefixes);
 
                     // Inject inherited ns declarations for needed prefixes
@@ -511,13 +510,6 @@ pub fn extract_signed_info(xml: &str) -> Result<String> {
                             if let Some(uri) = inherited_ns.get(prefix) {
                                 injected.insert(prefix.clone(), uri.clone());
                             }
-                        }
-                    }
-
-                    // Also check for default namespace if element uses it
-                    if needed_prefixes.contains("") && !own_ns.contains_key("") {
-                        if let Some(uri) = inherited_ns.get("") {
-                            injected.insert(String::new(), uri.clone());
                         }
                     }
 
