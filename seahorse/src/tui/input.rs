@@ -304,6 +304,10 @@ fn handle_saml_input(app: &mut App, key: KeyCode) {
                 SamlInputMode::File => SamlInputMode::Paste,
             };
         }
+        KeyCode::F(3) => {
+            // Browse for file using OS dialog
+            browse_and_load_saml(app);
+        }
         KeyCode::F(5) => {
             submit_saml_input(app);
         }
@@ -369,6 +373,65 @@ fn submit_saml_input(app: &mut App) {
     // Store input in status_message temporarily for processing in main loop
     app.status_message = input;
     app.screen = Screen::Waiting;
+}
+
+/// Open an OS file dialog to browse for a SAML assertion file, then load and decode it.
+fn browse_and_load_saml(app: &mut App) {
+    let file = pick_open_xml_dialog();
+    if let Some(path) = file {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                if content.len() > 1_048_576 {
+                    app.error_message = "File exceeds 1MB size limit".to_string();
+                    app.screen = Screen::Error;
+                    return;
+                }
+                app.status_message = content;
+                app.screen = Screen::Waiting;
+            }
+            Err(e) => {
+                app.error_message = format!("Failed to read file: {}", e);
+                app.screen = Screen::Error;
+            }
+        }
+    }
+}
+
+/// macOS: use osascript to open a file dialog for XML/SAML files.
+#[cfg(target_os = "macos")]
+fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    let _ = disable_raw_mode();
+    let result = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            r#"set theFile to choose file with prompt "Open SAML Assertion" of type {"xml", "txt", "public.xml"}"#,
+            "-e",
+            r#"POSIX path of theFile"#,
+        ])
+        .output();
+    let _ = enable_raw_mode();
+    match result {
+        Ok(output) if output.status.success() => {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path_str.is_empty() { None } else { Some(std::path::PathBuf::from(path_str)) }
+        }
+        _ => None,
+    }
+}
+
+/// Non-macOS: use rfd for native file dialog.
+#[cfg(not(target_os = "macos"))]
+fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    let _ = disable_raw_mode();
+    let file = rfd::FileDialog::new()
+        .set_title("Open SAML Assertion")
+        .add_filter("XML", &["xml"])
+        .add_filter("All Files", &["*"])
+        .pick_file();
+    let _ = enable_raw_mode();
+    file
 }
 
 fn expand_tilde(path: &str) -> String {

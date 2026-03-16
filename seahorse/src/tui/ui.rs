@@ -507,8 +507,8 @@ fn render_saml_input(frame: &mut Frame, app: &App) {
     }
 
     let help_text = match app.saml_input_mode {
-        SamlInputMode::Paste => "Tab: Switch Mode | F5: Decode | Esc: Back | q: Quit",
-        SamlInputMode::File => "Tab: Switch Mode | Enter: Load & Decode | Esc: Back | q: Quit",
+        SamlInputMode::Paste => "Tab: Switch Mode | F3: Browse File | F5: Decode | Esc: Back | q: Quit",
+        SamlInputMode::File => "Tab: Switch Mode | F3: Browse File | Enter: Load & Decode | Esc: Back | q: Quit",
     };
     let help = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
