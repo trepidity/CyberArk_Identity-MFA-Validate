@@ -290,8 +290,7 @@ fn extract_signature_data(assertion_xml: &str) -> Result<Option<SignatureData>> 
                             let key =
                                 String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             if key == "URI" {
-                                reference_uri =
-                                    String::from_utf8_lossy(&attr.value).to_string();
+                                reference_uri = String::from_utf8_lossy(&attr.value).to_string();
                             }
                         }
                     }
@@ -303,8 +302,7 @@ fn extract_signature_data(assertion_xml: &str) -> Result<Option<SignatureData>> 
                                 let key = String::from_utf8_lossy(attr.key.local_name().as_ref())
                                     .to_string();
                                 if key == "Algorithm" {
-                                    let val =
-                                        String::from_utf8_lossy(&attr.value).to_string();
+                                    let val = String::from_utf8_lossy(&attr.value).to_string();
                                     if val == "http://www.w3.org/2001/10/xml-exc-c14n#" {
                                         current_transform_is_exc_c14n = true;
                                     }
@@ -321,8 +319,7 @@ fn extract_signature_data(assertion_xml: &str) -> Result<Option<SignatureData>> 
                             let key =
                                 String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
                             if key == "PrefixList" {
-                                let prefix_list =
-                                    String::from_utf8_lossy(&attr.value).to_string();
+                                let prefix_list = String::from_utf8_lossy(&attr.value).to_string();
                                 let prefixes: Vec<String> = prefix_list
                                     .split_whitespace()
                                     .map(|s| s.to_string())
@@ -458,7 +455,13 @@ pub fn validate_assertion(
                     detail: format!("Missing signature components: {}", missing.join(", ")),
                     diagnostic: Some("Signature element found but incomplete".to_string()),
                 });
-                return compute_report(checks, idp_cert_loaded, algorithm, cert_subject, cert_not_after);
+                return compute_report(
+                    checks,
+                    idp_cert_loaded,
+                    algorithm,
+                    cert_subject,
+                    cert_not_after,
+                );
             }
         }
         Ok(None) => {
@@ -485,7 +488,13 @@ pub fn validate_assertion(
                 detail: format!("XML parse error: {}", e),
                 diagnostic: Some(e.to_string()),
             });
-            return compute_report(checks, idp_cert_loaded, algorithm, cert_subject, cert_not_after);
+            return compute_report(
+                checks,
+                idp_cert_loaded,
+                algorithm,
+                cert_subject,
+                cert_not_after,
+            );
         }
     };
 
@@ -608,7 +617,13 @@ pub fn validate_assertion(
     }
 
     // --- Compute Summary ---
-    compute_report(checks, idp_cert_loaded, algorithm, cert_subject, cert_not_after)
+    compute_report(
+        checks,
+        idp_cert_loaded,
+        algorithm,
+        cert_subject,
+        cert_not_after,
+    )
 }
 
 /// Run the digest verification check (Check 3).
@@ -640,7 +655,10 @@ fn run_digest_check(
                     "Unsupported digest algorithm: {}",
                     sig_data.digest_method_uri
                 ),
-                diagnostic: Some("Supported algorithms: SHA-256 (xmlenc#sha256), SHA-1 (xmldsig#sha1)".to_string()),
+                diagnostic: Some(
+                    "Supported algorithms: SHA-256 (xmlenc#sha256), SHA-1 (xmldsig#sha1)"
+                        .to_string(),
+                ),
             });
             return false;
         }
@@ -695,7 +713,7 @@ fn run_digest_check(
         }
     };
 
-    let computed_b64 = STANDARD.encode(&computed_digest);
+    let computed_b64 = STANDARD.encode(computed_digest);
     let expected_b64 = sig_data.digest_value_b64.replace(['\n', '\r', ' '], "");
 
     if computed_b64 == expected_b64 {
@@ -817,9 +835,7 @@ fn run_signature_check(
     };
 
     // Decode signature value
-    let clean_sig_b64 = sig_data
-        .signature_value_b64
-        .replace(['\n', '\r', ' '], "");
+    let clean_sig_b64 = sig_data.signature_value_b64.replace(['\n', '\r', ' '], "");
     let sig_bytes = match STANDARD.decode(&clean_sig_b64) {
         Ok(b) => b,
         Err(e) => {
@@ -839,10 +855,7 @@ fn run_signature_check(
             checks.push(ValidationCheck {
                 name: "Signature".to_string(),
                 passed: true,
-                detail: format!(
-                    "Signature verified ({})",
-                    &sig_data.signature_method_uri
-                ),
+                detail: format!("Signature verified ({})", &sig_data.signature_method_uri),
                 diagnostic: None,
             });
             (true, Some(cert))
@@ -852,7 +865,9 @@ fn run_signature_check(
                 name: "Signature".to_string(),
                 passed: false,
                 detail: "Signature verification failed".to_string(),
-                diagnostic: Some("The RSA signature does not match the canonicalized SignedInfo".to_string()),
+                diagnostic: Some(
+                    "The RSA signature does not match the canonicalized SignedInfo".to_string(),
+                ),
             });
             (false, Some(cert))
         }

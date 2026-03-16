@@ -165,8 +165,7 @@ fn test_validate_signed_assertion_with_idp_cert() {
         bundle.certificate.as_ref().unwrap(),
     )
     .unwrap();
-    let trust_store =
-        seahorse::saml::trust::load_idp_certificates(&test_pem_path()).unwrap();
+    let trust_store = seahorse::saml::trust::load_idp_certificates(&test_pem_path()).unwrap();
     let report = seahorse::saml::validator::validate_assertion(&xml, Some(&trust_store));
     assert_eq!(
         report.summary,

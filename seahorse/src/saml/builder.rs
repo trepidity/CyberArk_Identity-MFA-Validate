@@ -64,7 +64,9 @@ pub fn build_signed_assertion(
         body = assertion_body,
     );
 
-    let digest = openssl::hash::hash(MessageDigest::sha256(), assertion_for_digest.as_bytes())
+    let canon_body = super::c14n::canonicalize_exclusive(&assertion_for_digest, &[])
+        .context("Failed to canonicalize assertion for digest")?;
+    let digest = openssl::hash::hash(MessageDigest::sha256(), &canon_body)
         .context("Failed to compute SHA-256 digest")?;
     let digest_b64 = STANDARD.encode(digest);
 
@@ -75,10 +77,12 @@ pub fn build_signed_assertion(
         digest = digest_b64,
     );
 
+    let canon_signed_info = super::c14n::canonicalize_exclusive(&signed_info, &[])
+        .context("Failed to canonicalize SignedInfo")?;
     let mut signer =
         Signer::new(MessageDigest::sha256(), private_key).context("Failed to create signer")?;
     signer
-        .update(signed_info.as_bytes())
+        .update(&canon_signed_info)
         .context("Failed to update signer")?;
     let signature_bytes = signer.sign_to_vec().context("Failed to sign")?;
     let signature_b64 = STANDARD.encode(&signature_bytes);
