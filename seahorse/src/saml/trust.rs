@@ -123,7 +123,7 @@ pub fn validate_chain(leaf: &X509, chain: &[X509]) -> ChainResult {
     }) {
         Ok((true, depth)) => {
             // Find the root CN from the last chain cert
-            let root_cn = chain.last().map(|c| cert_cn(c)).unwrap_or_default();
+            let root_cn = chain.last().map(cert_cn).unwrap_or_default();
             ChainResult::Valid {
                 chain_depth: depth + chain.len(),
                 root_cn,
