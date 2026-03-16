@@ -270,14 +270,25 @@ fn render_waiting(frame: &mut Frame, app: &App) {
 }
 
 fn render_result(frame: &mut Frame, app: &App) {
+    // Calculate dynamic heights based on content
+    let details_lines: u16 = if app.assertion_details.is_some() { 8 } else { 1 };
+    let details_height = details_lines + 2; // +2 for borders
+
+    let validation_lines: u16 = if let Some(ref report) = app.signature_validation {
+        validation_content_lines(report, app.idp_trust_store.as_ref())
+    } else {
+        1
+    };
+    let validation_height = validation_lines + 2; // +2 for borders
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(10),
-            Constraint::Length(14),
-            Constraint::Min(5),
-            Constraint::Length(3),
+            Constraint::Length(3),                   // title
+            Constraint::Length(details_height),       // assertion details
+            Constraint::Length(validation_height),    // validation
+            Constraint::Min(5),                      // XML
+            Constraint::Length(3),                    // help
         ])
         .split(frame.area());
 
@@ -330,13 +341,11 @@ fn render_result(frame: &mut Frame, app: &App) {
         vec![Line::from("No assertion details available")]
     };
 
-    let details = Paragraph::new(details_text)
-        .block(
-            Block::default()
-                .title("Assertion Details")
-                .borders(Borders::ALL),
-        )
-        .wrap(Wrap { trim: false });
+    let details = Paragraph::new(details_text).block(
+        Block::default()
+            .title("Assertion Details")
+            .borders(Borders::ALL),
+    );
     frame.render_widget(details, chunks[1]);
 
     // Validation panel
@@ -348,14 +357,13 @@ fn render_result(frame: &mut Frame, app: &App) {
         frame.render_widget(placeholder, chunks[2]);
     }
 
-    // Raw XML (scrollable, pretty-printed)
+    // Raw XML (scrollable, pretty-printed — no Wrap to avoid border artifacts)
     let xml_paragraph = Paragraph::new(app.raw_xml.as_str())
         .block(
             Block::default()
                 .title("SAML Response (formatted)")
                 .borders(Borders::ALL),
         )
-        .wrap(Wrap { trim: false })
         .scroll((app.scroll_offset, 0));
     frame.render_widget(xml_paragraph, chunks[3]);
 
@@ -532,7 +540,11 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     } else {
         0
     };
-    let sig_height: u16 = if has_sig { 14 } else { 0 };
+    let sig_height: u16 = if let Some(ref report) = app.viewer_signature {
+        validation_content_lines(report, app.idp_trust_store.as_ref()) + 2 // +2 for borders
+    } else {
+        0
+    };
 
     let mut constraints = vec![
         Constraint::Length(3),              // title
@@ -576,8 +588,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
     // Details panel
     let details_text = build_viewer_details(app);
     let details = Paragraph::new(details_text)
-        .block(Block::default().title("Details").borders(Borders::ALL))
-        .wrap(Wrap { trim: false });
+        .block(Block::default().title("Details").borders(Borders::ALL));
     frame.render_widget(details, chunks[chunk_idx]);
     chunk_idx += 1;
 
@@ -595,8 +606,7 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
             })
             .collect();
         let attrs = Paragraph::new(attr_lines)
-            .block(Block::default().title("Attributes").borders(Borders::ALL))
-            .wrap(Wrap { trim: false });
+            .block(Block::default().title("Attributes").borders(Borders::ALL));
         frame.render_widget(attrs, chunks[chunk_idx]);
         chunk_idx += 1;
     }
@@ -609,14 +619,13 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
         chunk_idx += 1;
     }
 
-    // Formatted XML (scrollable)
+    // Formatted XML (scrollable — no Wrap to avoid border artifacts)
     let xml_paragraph = Paragraph::new(app.viewer_pretty_xml.as_str())
         .block(
             Block::default()
                 .title("SAML XML (formatted)")
                 .borders(Borders::ALL),
         )
-        .wrap(Wrap { trim: false })
         .scroll((app.viewer_scroll_offset, 0));
     frame.render_widget(xml_paragraph, chunks[chunk_idx]);
     chunk_idx += 1;
@@ -645,6 +654,27 @@ fn render_saml_view(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL));
         frame.render_widget(help, help_chunk);
     }
+}
+
+/// Calculate the number of content lines the validation panel will need.
+fn validation_content_lines(
+    report: &ValidationReport,
+    idp_trust_store: Option<&crate::saml::trust::IdpTrustStore>,
+) -> u16 {
+    let mut lines: u16 = 1; // summary line
+    lines += report.checks.len() as u16; // one line per check
+    if !report.algorithm.is_empty() {
+        lines += 1;
+    }
+    if !report.cert_subject.is_empty() {
+        lines += 1;
+    }
+    if report.cert_not_after.is_some() {
+        lines += 1;
+    }
+    lines += 1; // IDP cert line (always shown — either loaded or "not loaded")
+    let _ = idp_trust_store; // used by render, but we count the line regardless
+    lines
 }
 
 fn render_validation_panel(
