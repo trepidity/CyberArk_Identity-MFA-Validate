@@ -404,36 +404,14 @@ fn revalidate_current(app: &mut App) {
 }
 
 /// Open a native file dialog to browse for an IDP certificate PEM file.
-/// Temporarily exits raw mode and ensures the platform event loop is
-/// available so the OS dialog can render without freezing.
 ///
-/// On macOS, NSOpenPanel requires NSApplication to be initialized.
-/// A pure terminal app doesn't have one, so we initialize it here.
+/// On macOS, uses `osascript` to run the file dialog in a separate process.
+/// This avoids the NSApplication event loop issue that causes terminal apps
+/// to hang with a spinning ball after the dialog closes.
+///
+/// On other platforms, uses `rfd` (Rusty File Dialogs) directly.
 fn open_idp_cert_dialog(app: &mut App) {
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-
-    // Exit raw mode so the native dialog can work
-    let _ = disable_raw_mode();
-
-    // macOS: ensure NSApplication is initialized (required for NSOpenPanel)
-    #[cfg(target_os = "macos")]
-    {
-        use objc::{class, msg_send, sel, sel_impl};
-        unsafe {
-            let ns_app: *mut objc::runtime::Object = msg_send![class!(NSApplication), sharedApplication];
-            // Activate the app so the dialog appears in front
-            let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
-        }
-    }
-
-    let file = rfd::FileDialog::new()
-        .set_title("Select IDP Certificate (PEM)")
-        .add_filter("PEM Certificate", &["pem", "crt", "cer"])
-        .add_filter("All Files", &["*"])
-        .pick_file();
-
-    // Re-enter raw mode
-    let _ = enable_raw_mode();
+    let file = pick_file_dialog();
 
     if let Some(path) = file {
         match saml::trust::load_idp_certificates(&path) {
@@ -454,6 +432,57 @@ fn open_idp_cert_dialog(app: &mut App) {
             }
         }
     }
+}
+
+/// macOS: use osascript to open a file dialog in a separate process.
+/// This avoids the spinning ball caused by NSApplication event loop issues
+/// in terminal apps.
+#[cfg(target_os = "macos")]
+fn pick_file_dialog() -> Option<std::path::PathBuf> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    let _ = disable_raw_mode();
+
+    let result = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            r#"set theFile to choose file with prompt "Select IDP Certificate (PEM)" of type {"pem", "crt", "cer", "public.x509-certificate"}"#,
+            "-e",
+            r#"POSIX path of theFile"#,
+        ])
+        .output();
+
+    let _ = enable_raw_mode();
+
+    match result {
+        Ok(output) if output.status.success() => {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path_str.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(path_str))
+            }
+        }
+        _ => None, // User cancelled or osascript failed
+    }
+}
+
+/// Non-macOS: use rfd for native file dialog.
+#[cfg(not(target_os = "macos"))]
+fn pick_file_dialog() -> Option<std::path::PathBuf> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    let _ = disable_raw_mode();
+
+    let file = rfd::FileDialog::new()
+        .set_title("Select IDP Certificate (PEM)")
+        .add_filter("PEM Certificate", &["pem", "crt", "cer"])
+        .add_filter("All Files", &["*"])
+        .pick_file();
+
+    let _ = enable_raw_mode();
+
+    file
 }
 
 fn handle_saml_view(app: &mut App, key: KeyCode) {
