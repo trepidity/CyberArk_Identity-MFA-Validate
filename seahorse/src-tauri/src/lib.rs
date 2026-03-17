@@ -10,6 +10,7 @@ pub fn run() {
             commands::decode_saml,
             commands::validate_assertion,
             commands::load_idp_cert,
+            commands::save_raw_xml,
         ])
         .setup(|app| {
             use tauri::Manager;
