@@ -279,14 +279,17 @@ fn emit_progress(app: &tauri::AppHandle, step: &str, message: &str) {
 /// Handles CORS preflight (OPTIONS) requests since the XHR originates from CyberArk's domain.
 async fn accept_saml_callback(listener: tokio::net::TcpListener) -> Result<String, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tracing::info;
 
     let cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
 
     loop {
-        let (mut stream, _) = listener
+        info!("[callback] Waiting for connection...");
+        let (mut stream, addr) = listener
             .accept()
             .await
             .map_err(|e| format!("Failed to accept callback connection: {}", e))?;
+        info!("[callback] Connection from {}", addr);
 
         // Read request
         let mut buf = vec![0u8; 131072]; // 128KB should be enough for any SAMLResponse
@@ -324,6 +327,9 @@ async fn accept_saml_callback(listener: tokio::net::TcpListener) -> Result<Strin
 
         let request = String::from_utf8_lossy(&buf[..total]);
         let first_line = request.lines().next().unwrap_or("");
+
+        info!("[callback] Request: {}", first_line);
+        info!("[callback] Total bytes read: {}", total);
 
         // Handle CORS preflight
         if first_line.starts_with("OPTIONS") {
@@ -366,10 +372,15 @@ async fn accept_saml_callback(listener: tokio::net::TcpListener) -> Result<Strin
             raw_body
         };
 
+        info!("[callback] Extracted SAMLResponse ({} chars)", saml_b64.len());
+        info!("[callback] First 80 chars: {}", &saml_b64[..saml_b64.len().min(80)]);
+
         if saml_b64.is_empty() {
+            info!("[callback] Empty body, continuing to wait...");
             continue;
         }
 
+        info!("[callback] SAMLResponse received, returning");
         return Ok(saml_b64);
     }
 }
@@ -670,13 +681,16 @@ pub async fn run_browser_flow(
     // We keep it in the signature for API symmetry.
     let _ = (signed, &config_dir);
 
+    use tracing::info;
+
+    info!("[browser_flow] Starting browser flow for user: {}", username);
     emit_progress(&app, "start", "Opening CyberArk login window...");
 
     let login_url =
         seahorse::auth::browser_flow::build_login_url(&config.url, &username, &config.appkey);
+    info!("[browser_flow] Login URL: {}", login_url);
 
     // Start a tiny localhost HTTP server to receive the SAMLResponse callback
-    // (Tauri doesn't inject window.__TAURI__ into external URLs, so we can't use IPC)
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("Failed to bind callback server: {}", e))?;
@@ -684,8 +698,8 @@ pub async fn run_browser_flow(
         .local_addr()
         .map_err(|e| format!("Failed to get port: {}", e))?
         .port();
+    info!("[browser_flow] Callback server listening on port {}", callback_port);
 
-    // Build the intercept JS with the callback URL baked in
     let intercept_js = build_intercept_js(callback_port);
 
     // Open a second Tauri webview window for the CyberArk login
@@ -703,6 +717,7 @@ pub async fn run_browser_flow(
     .initialization_script(&intercept_js)
     .build()
     .map_err(|e| format!("Failed to open login window: {}", e))?;
+    info!("[browser_flow] Auth window opened");
 
     emit_progress(
         &app,
@@ -710,42 +725,65 @@ pub async fn run_browser_flow(
         "Waiting for authentication in browser window...",
     );
 
-    // Wait for the SAMLResponse via the HTTP callback (or timeout after 5 minutes)
+    // Wait for the SAMLResponse via the HTTP callback (or timeout)
+    info!("[browser_flow] Waiting for SAMLResponse callback...");
     let saml_b64 = tokio::select! {
         result = accept_saml_callback(listener) => {
+            match &result {
+                Ok(b64) => info!("[browser_flow] Received SAMLResponse ({} chars)", b64.len()),
+                Err(e) => info!("[browser_flow] Callback error: {}", e),
+            }
             result?
         }
         _ = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {
+            info!("[browser_flow] Timeout waiting for SAMLResponse");
             let _ = auth_window.close();
             return Err("Authentication timed out after 5 minutes".to_string());
         }
     };
 
-    // Close the login window
+    info!("[browser_flow] Closing auth window...");
     let _ = auth_window.close();
 
+    info!("[browser_flow] Decoding base64 SAMLResponse ({} chars)...", saml_b64.len());
+    info!("[browser_flow] First 100 chars: {}", &saml_b64[..saml_b64.len().min(100)]);
     emit_progress(&app, "decoding", "Decoding SAML response...");
 
-    // Decode the base64 SAMLResponse
     let xml_bytes = STANDARD
         .decode(&saml_b64)
-        .map_err(|e| format!("Failed to base64-decode SAMLResponse: {}", e))?;
+        .map_err(|e| {
+            info!("[browser_flow] Base64 decode FAILED: {}", e);
+            format!("Failed to base64-decode SAMLResponse: {}", e)
+        })?;
+    info!("[browser_flow] Base64 decoded to {} bytes", xml_bytes.len());
+
     let response_xml = String::from_utf8(xml_bytes)
-        .map_err(|e| format!("SAMLResponse is not valid UTF-8: {}", e))?;
+        .map_err(|e| {
+            info!("[browser_flow] UTF-8 conversion FAILED: {}", e);
+            format!("SAMLResponse is not valid UTF-8: {}", e)
+        })?;
+    info!("[browser_flow] Response XML length: {} chars", response_xml.len());
+    info!("[browser_flow] First 200 chars: {}", &response_xml[..response_xml.len().min(200)]);
 
-    // Extract the assertion from the SAML Response
     let assertion_xml = seahorse::saml::parser::extract_assertion_from_response(&response_xml)
-        .map_err(|e| format!("Failed to extract assertion: {}", e))?;
+        .map_err(|e| {
+            info!("[browser_flow] Assertion extraction FAILED: {}", e);
+            format!("Failed to extract assertion: {}", e)
+        })?;
+    info!("[browser_flow] Assertion extracted ({} chars)", assertion_xml.len());
 
-    // Validate while holding state lock (for trust store reference)
     emit_progress(&app, "validating", "Validating assertion...");
+    info!("[browser_flow] Validating assertion...");
     let decoded = {
         let mut guard = state.lock().unwrap();
+        info!("[browser_flow] State lock acquired, validating...");
         let result = validate_assertion_xml(&assertion_xml, guard.idp_trust_store.as_ref())?;
         guard.last_raw_xml = Some(assertion_xml);
+        info!("[browser_flow] Validation complete, storing raw XML");
         result
     };
 
     emit_progress(&app, "done", "Browser authentication complete!");
+    info!("[browser_flow] Browser flow complete, returning result");
     Ok(decoded)
 }
