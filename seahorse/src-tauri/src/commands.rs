@@ -274,139 +274,6 @@ fn emit_progress(app: &tauri::AppHandle, step: &str, message: &str) {
     .ok();
 }
 
-/// Accept the SAMLResponse from the injected JS via localhost HTTP callback.
-/// The JS sends a POST request with the base64-encoded SAMLResponse as the body.
-/// Handles CORS preflight (OPTIONS) requests since the XHR originates from CyberArk's domain.
-async fn accept_saml_callback(listener: tokio::net::TcpListener) -> Result<String, String> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tracing::info;
-
-    let cors_headers = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\n";
-
-    loop {
-        info!("[callback] Waiting for connection...");
-        let (mut stream, addr) = listener
-            .accept()
-            .await
-            .map_err(|e| format!("Failed to accept callback connection: {}", e))?;
-        info!("[callback] Connection from {}", addr);
-
-        // Read request
-        let mut buf = vec![0u8; 131072]; // 128KB should be enough for any SAMLResponse
-        let mut total = 0;
-        loop {
-            let n = stream
-                .read(&mut buf[total..])
-                .await
-                .map_err(|e| format!("Failed to read: {}", e))?;
-            if n == 0 {
-                break;
-            }
-            total += n;
-            // Check if request is complete (headers + body)
-            if let Some(header_end) = buf[..total].windows(4).position(|w| w == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&buf[..header_end]);
-                let content_length = headers
-                    .lines()
-                    .find_map(|line| {
-                        if line.to_lowercase().starts_with("content-length:") {
-                            line.split(':').nth(1)?.trim().parse::<usize>().ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                if total - (header_end + 4) >= content_length {
-                    break;
-                }
-            }
-            if total >= buf.len() {
-                break;
-            }
-        }
-
-        let request = String::from_utf8_lossy(&buf[..total]);
-        let first_line = request.lines().next().unwrap_or("");
-
-        info!("[callback] Request: {}", first_line);
-        info!("[callback] Total bytes read: {}", total);
-
-        // Handle CORS preflight
-        if first_line.starts_with("OPTIONS") {
-            let resp = format!(
-                "HTTP/1.1 204 No Content\r\n{cors_headers}Content-Length: 0\r\n\r\n"
-            );
-            let _ = stream.write_all(resp.as_bytes()).await;
-            continue; // Wait for the actual POST
-        }
-
-        // Handle POST with SAMLResponse — respond with a "done" page
-        let done_html = "<html><body style='display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666'><p>Authentication complete. This window will close.</p></body></html>";
-        let resp = format!(
-            "HTTP/1.1 200 OK\r\n{cors_headers}Content-Type: text/html\r\nContent-Length: {}\r\n\r\n{done_html}",
-            done_html.len()
-        );
-        let _ = stream.write_all(resp.as_bytes()).await;
-
-        // Extract body (form POST sends: SAMLResponse=<url-encoded-base64>)
-        let body_start = buf[..total]
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .map(|p| p + 4)
-            .unwrap_or(0);
-        let raw_body = String::from_utf8_lossy(&buf[body_start..total])
-            .trim()
-            .to_string();
-
-        if raw_body.is_empty() {
-            continue;
-        }
-
-        // Parse URL-encoded form data: SAMLResponse=<value>
-        let saml_b64 = if raw_body.starts_with("SAMLResponse=") {
-            let encoded = &raw_body["SAMLResponse=".len()..];
-            // URL-decode the value (base64 has +, =, / that get percent-encoded)
-            percent_decode(encoded)
-        } else {
-            // Might be plain text body
-            raw_body
-        };
-
-        info!("[callback] Extracted SAMLResponse ({} chars)", saml_b64.len());
-        info!("[callback] First 80 chars: {}", &saml_b64[..saml_b64.len().min(80)]);
-
-        if saml_b64.is_empty() {
-            info!("[callback] Empty body, continuing to wait...");
-            continue;
-        }
-
-        info!("[callback] SAMLResponse received, returning");
-        return Ok(saml_b64);
-    }
-}
-
-/// Simple percent-decode for URL-encoded form data.
-fn percent_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '%' => {
-                let hex: String = chars.by_ref().take(2).collect();
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                } else {
-                    result.push('%');
-                    result.push_str(&hex);
-                }
-            }
-            '+' => result.push(' '),
-            _ => result.push(c),
-        }
-    }
-    result
-}
-
 // --- Helper: build SAML assertion XML ---
 
 fn build_assertion_xml(
@@ -585,78 +452,64 @@ pub async fn run_rest_flow(
 // --- Browser Flow Command ---
 
 /// JavaScript injected into the CyberArk login webview to intercept the SAMLResponse.
-/// Adapted from seahorse::auth::browser_flow::INTERCEPT_JS to use Tauri IPC.
-/// Build the JS intercept script with the localhost callback URL injected.
-/// The script captures the SAMLResponse and POSTs it to our local HTTP server
-/// instead of using Tauri IPC (which doesn't work for external URLs).
-fn build_intercept_js(callback_port: u16) -> String {
-    format!(
-        r#"
-(function() {{
+/// Uses `document.title` to pass the captured value back to Rust, since:
+/// - window.__TAURI__ is not available on external URLs
+/// - XHR/fetch to http://localhost is blocked by mixed-content (HTTPS→HTTP)
+/// - Form POST to http://localhost is ALSO blocked by WebKit
+///
+/// The Rust side polls `window.title()` to detect when the SAMLResponse is captured.
+const INTERCEPT_JS: &str = r#"
+(function() {
     var captured = false;
-    var CALLBACK_URL = 'http://127.0.0.1:{port}/saml-callback';
 
-    function sendToRust(value) {{
+    function sendToRust(value) {
         if (captured) return;
         captured = true;
-        // Use a form POST (top-level navigation) instead of XHR.
-        // XHR from HTTPS to HTTP localhost is blocked by mixed-content policy.
-        // Form POST navigation is not subject to this restriction.
-        var form = document.createElement('form');
-        form.method = 'POST';
-        form.action = CALLBACK_URL;
-        var input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'SAMLResponse';
-        input.value = value;
-        form.appendChild(input);
-        document.body.innerHTML = '';
-        document.body.appendChild(form);
-        form.submit();
-    }}
+        // Signal to Rust by setting the document title to a known prefix + the value.
+        // Rust polls window.title() and looks for the SAML_CAPTURED: prefix.
+        document.title = 'SAML_CAPTURED:' + value;
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666"><p>Authentication complete. This window will close.</p></div>';
+    }
 
     // Layer 1: Override HTMLFormElement.prototype.submit() globally.
     var originalSubmit = HTMLFormElement.prototype.submit;
-    HTMLFormElement.prototype.submit = function() {{
+    HTMLFormElement.prototype.submit = function() {
         var input = this.querySelector('input[name="SAMLResponse"]');
-        if (input && input.value) {{
+        if (input && input.value) {
             sendToRust(input.value);
             return;
-        }}
+        }
         originalSubmit.call(this);
-    }};
+    };
 
     // Layer 2: Global submit event listener (capture phase).
-    document.addEventListener('submit', function(e) {{
+    document.addEventListener('submit', function(e) {
         var form = e.target;
         var input = form.querySelector('input[name="SAMLResponse"]');
-        if (input && input.value) {{
+        if (input && input.value) {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
             sendToRust(input.value);
             return false;
-        }}
-    }}, true);
+        }
+    }, true);
 
     // Layer 3: Poll for SAMLResponse input appearing in the DOM.
-    var checkInterval = setInterval(function() {{
+    var checkInterval = setInterval(function() {
         var inputs = document.querySelectorAll('input[name="SAMLResponse"]');
-        for (var i = 0; i < inputs.length; i++) {{
-            if (inputs[i].value) {{
+        for (var i = 0; i < inputs.length; i++) {
+            if (inputs[i].value) {
                 clearInterval(checkInterval);
                 sendToRust(inputs[i].value);
                 return;
-            }}
-        }}
-    }}, 50);
+            }
+        }
+    }, 50);
 
-    setTimeout(function() {{ clearInterval(checkInterval); }}, 120000);
-}})();
-"#,
-        port = callback_port
-    )
-}
+    setTimeout(function() { clearInterval(checkInterval); }, 120000);
+})();
+"#;
 
 #[tauri::command]
 pub async fn run_browser_flow(
@@ -690,19 +543,8 @@ pub async fn run_browser_flow(
         seahorse::auth::browser_flow::build_login_url(&config.url, &username, &config.appkey);
     info!("[browser_flow] Login URL: {}", login_url);
 
-    // Start a tiny localhost HTTP server to receive the SAMLResponse callback
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|e| format!("Failed to bind callback server: {}", e))?;
-    let callback_port = listener
-        .local_addr()
-        .map_err(|e| format!("Failed to get port: {}", e))?
-        .port();
-    info!("[browser_flow] Callback server listening on port {}", callback_port);
-
-    let intercept_js = build_intercept_js(callback_port);
-
     // Open a second Tauri webview window for the CyberArk login
+    // The JS intercept captures the SAMLResponse and sets it as document.title
     let auth_window = tauri::WebviewWindowBuilder::new(
         &app,
         "cyberark-login",
@@ -714,7 +556,7 @@ pub async fn run_browser_flow(
     )
     .title("Seahorse - CyberArk Login")
     .inner_size(800.0, 700.0)
-    .initialization_script(&intercept_js)
+    .initialization_script(INTERCEPT_JS)
     .build()
     .map_err(|e| format!("Failed to open login window: {}", e))?;
     info!("[browser_flow] Auth window opened");
@@ -725,20 +567,26 @@ pub async fn run_browser_flow(
         "Waiting for authentication in browser window...",
     );
 
-    // Wait for the SAMLResponse via the HTTP callback (or timeout)
-    info!("[browser_flow] Waiting for SAMLResponse callback...");
-    let saml_b64 = tokio::select! {
-        result = accept_saml_callback(listener) => {
-            match &result {
-                Ok(b64) => info!("[browser_flow] Received SAMLResponse ({} chars)", b64.len()),
-                Err(e) => info!("[browser_flow] Callback error: {}", e),
+    // Poll the auth window's title for the SAMLResponse.
+    // The injected JS sets document.title = "SAML_CAPTURED:<base64>" when it intercepts the response.
+    // This avoids all IPC/HTTP/mixed-content issues.
+    info!("[browser_flow] Polling window title for SAMLResponse...");
+    let saml_b64 = loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Check if window was closed
+        match auth_window.title() {
+            Ok(title) => {
+                if let Some(b64) = title.strip_prefix("SAML_CAPTURED:") {
+                    info!("[browser_flow] SAMLResponse captured via title ({} chars)", b64.len());
+                    break b64.to_string();
+                }
             }
-            result?
-        }
-        _ = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {
-            info!("[browser_flow] Timeout waiting for SAMLResponse");
-            let _ = auth_window.close();
-            return Err("Authentication timed out after 5 minutes".to_string());
+            Err(_) => {
+                // Window was closed or destroyed
+                info!("[browser_flow] Auth window closed by user");
+                return Err("Login window was closed without completing authentication".to_string());
+            }
         }
     };
 
