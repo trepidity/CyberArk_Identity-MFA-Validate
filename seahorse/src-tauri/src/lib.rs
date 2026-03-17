@@ -22,6 +22,8 @@ pub fn run() {
             commands::save_raw_xml,
             commands::run_rest_flow,
             commands::run_browser_flow,
+            commands::compare_saml,
+            commands::compare_revalidate,
         ])
         .setup(|app| {
             use tauri::Manager;

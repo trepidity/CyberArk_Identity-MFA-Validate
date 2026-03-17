@@ -6,6 +6,7 @@ use openssl::x509::{X509StoreContext, X509};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct IdpTrustStore {
     pub leaf_cert: X509,
     pub chain_certs: Vec<X509>,

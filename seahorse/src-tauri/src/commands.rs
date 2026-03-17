@@ -56,6 +56,137 @@ pub struct CertInfoDto {
     pub source_path: String,
 }
 
+// --- Compare DTOs ---
+
+#[derive(Serialize)]
+pub struct DecodeInfo {
+    pub doc_type: String,
+    pub byte_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct DiffResultInfo {
+    pub lines: Vec<DiffLineInfo>,
+    pub left_total: usize,
+    pub right_total: usize,
+    pub diff_count: usize,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type")]
+pub enum DiffLineInfo {
+    Same { text: String },
+    Added { text: String },
+    Removed { text: String },
+    Changed {
+        left: String,
+        right: String,
+        left_spans: Vec<(usize, usize)>,
+        right_spans: Vec<(usize, usize)>,
+    },
+}
+
+#[derive(Serialize)]
+pub struct ByteDiffRowInfo {
+    pub offset: usize,
+    pub left_bytes: Vec<u8>,
+    pub right_bytes: Vec<u8>,
+    pub diffs: Vec<usize>,
+}
+
+#[derive(Serialize)]
+pub struct CompareResult {
+    pub decode_a: DecodeInfo,
+    pub decode_b: DecodeInfo,
+    pub xml_diff: DiffResultInfo,
+    pub hex_diff: Vec<ByteDiffRowInfo>,
+    pub c14n_diff: DiffResultInfo,
+    pub validation_a: seahorse::saml::validator::ValidationReport,
+    pub validation_b: seahorse::saml::validator::ValidationReport,
+}
+
+#[derive(Serialize)]
+pub struct CompareRevalidateResult {
+    pub validation_a: seahorse::saml::validator::ValidationReport,
+    pub validation_b: seahorse::saml::validator::ValidationReport,
+}
+
+// --- Compare helpers ---
+
+fn convert_diff_result(dr: &seahorse::saml::diff::DiffResult) -> DiffResultInfo {
+    DiffResultInfo {
+        lines: dr.lines.iter().map(convert_diff_line).collect(),
+        left_total: dr.left_total,
+        right_total: dr.right_total,
+        diff_count: dr.diff_count,
+    }
+}
+
+fn convert_diff_line(dl: &seahorse::saml::diff::DiffLine) -> DiffLineInfo {
+    match dl {
+        seahorse::saml::diff::DiffLine::Same(text) => DiffLineInfo::Same { text: text.clone() },
+        seahorse::saml::diff::DiffLine::Added(text) => DiffLineInfo::Added { text: text.clone() },
+        seahorse::saml::diff::DiffLine::Removed(text) => DiffLineInfo::Removed { text: text.clone() },
+        seahorse::saml::diff::DiffLine::Changed { left, right, left_spans, right_spans } => {
+            DiffLineInfo::Changed {
+                left: left.clone(),
+                right: right.clone(),
+                left_spans: left_spans.clone(),
+                right_spans: right_spans.clone(),
+            }
+        }
+    }
+}
+
+fn convert_byte_diff(rows: &[seahorse::saml::diff::ByteDiffRow]) -> Vec<ByteDiffRowInfo> {
+    rows.iter().map(|r| ByteDiffRowInfo {
+        offset: r.offset,
+        left_bytes: r.left_bytes.clone(),
+        right_bytes: r.right_bytes.clone(),
+        diffs: r.diffs.clone(),
+    }).collect()
+}
+
+fn extract_inclusive_prefixes(xml: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    if let Some(start) = xml.find("PrefixList=\"") {
+        let rest = &xml[start + 12..];
+        if let Some(end) = rest.find('"') {
+            for prefix in rest[..end].split_whitespace() {
+                prefixes.push(prefix.to_string());
+            }
+        }
+    }
+    prefixes
+}
+
+fn extract_assertion_xml_for_compare(decoded_xml: &str, doc_type: &seahorse::saml::decoder::SamlDocumentType) -> Result<String, String> {
+    match doc_type {
+        seahorse::saml::decoder::SamlDocumentType::Assertion => Ok(decoded_xml.to_string()),
+        seahorse::saml::decoder::SamlDocumentType::Response => {
+            seahorse::saml::parser::extract_assertion_from_response(decoded_xml)
+                .map_err(|e| format!("Failed to extract assertion from Response: {}", e))
+        }
+        seahorse::saml::decoder::SamlDocumentType::AuthnRequest => {
+            Err("Cannot compare AuthnRequest documents — only Assertions and Responses are supported".to_string())
+        }
+    }
+}
+
+fn compute_c14n_text(xml: &str) -> String {
+    let without_sig = seahorse::saml::c14n::remove_signature_element(xml)
+        .unwrap_or_else(|_| xml.to_string());
+    let prefixes = extract_inclusive_prefixes(xml);
+    let prefix_refs: Vec<&str> = prefixes.iter().map(|s| s.as_str()).collect();
+    match seahorse::saml::c14n::canonicalize_exclusive(&without_sig, &prefix_refs) {
+        Ok(bytes) => {
+            let raw = String::from_utf8_lossy(&bytes).to_string();
+            seahorse::saml::parser::pretty_print_xml(&raw)
+        }
+        Err(_) => "(canonicalization failed)".to_string(),
+    }
+}
+
 // --- Config path resolution ---
 
 fn find_config_base_path() -> Option<PathBuf> {
@@ -714,4 +845,78 @@ pub async fn run_browser_flow(
     emit_progress(&app, "done", "Browser authentication complete!");
     info!("[browser_flow] Browser flow complete, returning result");
     Ok(decoded)
+}
+
+// --- Compare Commands ---
+
+#[tauri::command]
+pub async fn compare_saml(
+    state: State<'_, Mutex<AppState>>,
+    input_a: String,
+    input_b: String,
+) -> Result<CompareResult, String> {
+    let result_a = seahorse::saml::decoder::decode_saml_input(&input_a)
+        .map_err(|e| format!("Failed to decode Assertion A: {}", e))?;
+    let result_b = seahorse::saml::decoder::decode_saml_input(&input_b)
+        .map_err(|e| format!("Failed to decode Assertion B: {}", e))?;
+
+    let decode_a = DecodeInfo {
+        doc_type: format!("{:?}", result_a.document_type),
+        byte_count: result_a.xml.as_bytes().len(),
+    };
+    let decode_b = DecodeInfo {
+        doc_type: format!("{:?}", result_b.document_type),
+        byte_count: result_b.xml.as_bytes().len(),
+    };
+
+    let xml_a = extract_assertion_xml_for_compare(&result_a.xml, &result_a.document_type)?;
+    let xml_b = extract_assertion_xml_for_compare(&result_b.xml, &result_b.document_type)?;
+
+    let trust_store = {
+        let guard = state.lock().unwrap();
+        guard.idp_trust_store.clone()
+    };
+
+    let compare_result = tokio::task::spawn_blocking(move || {
+        let pretty_a = seahorse::saml::parser::pretty_print_xml(&xml_a);
+        let pretty_b = seahorse::saml::parser::pretty_print_xml(&xml_b);
+        let xml_diff = seahorse::saml::diff::diff_lines(&pretty_a, &pretty_b);
+
+        let hex_diff = seahorse::saml::diff::diff_bytes(xml_a.as_bytes(), xml_b.as_bytes());
+
+        let c14n_a = compute_c14n_text(&xml_a);
+        let c14n_b = compute_c14n_text(&xml_b);
+        let c14n_diff = seahorse::saml::diff::diff_lines(&c14n_a, &c14n_b);
+
+        let validation_a = seahorse::saml::validator::validate_assertion(&xml_a, trust_store.as_ref());
+        let validation_b = seahorse::saml::validator::validate_assertion(&xml_b, trust_store.as_ref());
+
+        CompareResult {
+            decode_a,
+            decode_b,
+            xml_diff: convert_diff_result(&xml_diff),
+            hex_diff: convert_byte_diff(&hex_diff),
+            c14n_diff: convert_diff_result(&c14n_diff),
+            validation_a,
+            validation_b,
+        }
+    })
+    .await
+    .map_err(|e| format!("Comparison task failed: {}", e))?;
+
+    Ok(compare_result)
+}
+
+#[tauri::command]
+pub fn compare_revalidate(
+    state: State<'_, Mutex<AppState>>,
+    xml_a: String,
+    xml_b: String,
+) -> Result<CompareRevalidateResult, String> {
+    let guard = state.lock().unwrap();
+    let trust_store = guard.idp_trust_store.as_ref();
+    Ok(CompareRevalidateResult {
+        validation_a: seahorse::saml::validator::validate_assertion(&xml_a, trust_store),
+        validation_b: seahorse::saml::validator::validate_assertion(&xml_b, trust_store),
+    })
 }
