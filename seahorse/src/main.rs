@@ -180,6 +180,12 @@ fn run_app(
         // Reset config if environment changed (going back to EnvSelect)
         if app.screen == Screen::EnvSelect {
             app.config = None;
+            app.compare_panes = [seahorse::tui::app::ComparePane::default(), seahorse::tui::app::ComparePane::default()];
+            app.compare_active_pane = 0;
+            app.compare_diff_result = None;
+            app.compare_byte_diff = None;
+            app.compare_c14n_diff = None;
+            app.compare_validation = None;
         }
     }
 

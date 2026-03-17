@@ -889,6 +889,24 @@ pub fn handle_compare_view(app: &mut App, key_code: KeyCode) {
             app.compare_scroll_offset = 0;
             app.compare_h_scroll_offset = 0;
         }
+        // IDP cert loading (for Mode 4 re-validation)
+        // 'i' opens file dialog (matching existing Result/SamlView screens)
+        KeyCode::Char('i') => {
+            crate::tui::input::open_idp_cert_dialog(app);
+            // Re-validate both assertions after cert load
+            if let (Some(left_xml), Some(right_xml)) = (
+                app.compare_panes[0].decoded_xml.clone(),
+                app.compare_panes[1].decoded_xml.clone(),
+            ) {
+                let left_report = crate::saml::validator::validate_assertion(&left_xml, app.idp_trust_store.as_ref());
+                let right_report = crate::saml::validator::validate_assertion(&right_xml, app.idp_trust_store.as_ref());
+                app.compare_validation = Some((left_report, right_report));
+            }
+        }
+        KeyCode::Char('I') => {
+            app.idp_cert_input_active = true;
+            app.idp_cert_input.clear();
+        }
         _ => {}
     }
 }

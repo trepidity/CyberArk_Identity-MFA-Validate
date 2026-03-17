@@ -41,6 +41,16 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
                                 app.idp_trust_store = Some(store);
                                 // Re-run validation on current assertion
                                 revalidate_current(app);
+                                if app.screen == Screen::CompareView {
+                                    if let (Some(left_xml), Some(right_xml)) = (
+                                        app.compare_panes[0].decoded_xml.clone(),
+                                        app.compare_panes[1].decoded_xml.clone(),
+                                    ) {
+                                        let left_report = crate::saml::validator::validate_assertion(&left_xml, app.idp_trust_store.as_ref());
+                                        let right_report = crate::saml::validator::validate_assertion(&right_xml, app.idp_trust_store.as_ref());
+                                        app.compare_validation = Some((left_report, right_report));
+                                    }
+                                }
                             }
                             Err(e) => {
                                 app.status_message = format!("Failed to load IDP cert: {}", e);
