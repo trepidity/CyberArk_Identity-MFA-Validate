@@ -44,6 +44,7 @@
       </div>
 
       <button id="btn-viewer" class="btn btn-neutral">View SAML Assertion</button>
+      <button id="btn-compare" class="btn btn-neutral">Compare SAML Assertions</button>
     </div>
   </section>
 
@@ -173,6 +174,73 @@
       <div id="viewer-spinner" class="viewer-spinner hidden">
         <div class="spinner"></div>
         <span>Decoding...</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screen 5: Compare -->
+  <section id="screen-compare" class="screen">
+    <div class="screen-content">
+      <header class="screen-header">
+        <button id="compare-back" class="btn-back" aria-label="Back">&larr; Back</button>
+        <h2 class="screen-title">Compare SAML Assertions</h2>
+      </header>
+
+      <!-- Input Phase -->
+      <div id="compare-input-phase">
+        <div class="compare-panels">
+          <!-- Panel A -->
+          <div id="compare-panel-a" class="compare-panel">
+            <h3 class="panel-title">Assertion A</h3>
+            <div class="compare-panel-actions">
+              <button id="btn-open-file-a" class="btn btn-action btn-sm">Open File</button>
+              <button id="btn-paste-a" class="btn btn-action btn-sm">Paste from Clipboard</button>
+            </div>
+            <textarea id="compare-input-a" class="saml-textarea" rows="10" placeholder="Paste SAML data here (XML, base64, or URL-encoded)..."></textarea>
+            <div id="compare-status-a" class="compare-status"></div>
+          </div>
+
+          <!-- Panel B -->
+          <div id="compare-panel-b" class="compare-panel">
+            <h3 class="panel-title">Assertion B</h3>
+            <div class="compare-panel-actions">
+              <button id="btn-open-file-b" class="btn btn-action btn-sm">Open File</button>
+              <button id="btn-paste-b" class="btn btn-action btn-sm">Paste from Clipboard</button>
+            </div>
+            <textarea id="compare-input-b" class="saml-textarea" rows="10" placeholder="Paste SAML data here (XML, base64, or URL-encoded)..."></textarea>
+            <div id="compare-status-b" class="compare-status"></div>
+          </div>
+        </div>
+
+        <button id="btn-compare-go" class="btn btn-primary btn-full">Compare</button>
+
+        <div id="compare-spinner" class="viewer-spinner hidden">
+          <div class="spinner"></div>
+          <span>Comparing...</span>
+        </div>
+      </div>
+
+      <!-- Results Phase -->
+      <div id="compare-results-phase" class="hidden">
+        <!-- Toolbar -->
+        <div class="compare-toolbar">
+          <div class="compare-tab-bar">
+            <button class="compare-tab active" data-ctab="xml">XML Diff</button>
+            <button class="compare-tab" data-ctab="hex">Hex / Bytes</button>
+            <button class="compare-tab" data-ctab="c14n">Canonicalized</button>
+            <button class="compare-tab" data-ctab="validation">Validation</button>
+            <button class="compare-tab" data-ctab="all">All</button>
+          </div>
+          <div class="compare-toolbar-right">
+            <button id="btn-diffs-only" class="btn btn-action btn-sm">Diffs Only</button>
+            <span id="compare-diff-count" class="compare-diff-count"></span>
+            <button id="btn-load-idp-compare" class="btn btn-action btn-sm">Load IDP Cert</button>
+            <button id="btn-load-chain-compare" class="btn btn-action btn-sm">Load Chain Cert</button>
+          </div>
+        </div>
+
+        <!-- Content -->
+        <div id="compare-content" class="compare-content"></div>
       </div>
     </div>
   </section>
