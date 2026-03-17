@@ -1,0 +1,29 @@
+{
+  "productName": "Seahorse",
+  "version": "1.0.0",
+  "identifier": "org.bswh.seahorse",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Seahorse — SAML Validation Tool",
+        "width": 900,
+        "height": 700,
+        "resizable": true,
+        "minWidth": 600,
+        "minHeight": 500
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}
