@@ -728,10 +728,18 @@
     // Error toast dismiss
     $('#error-dismiss').addEventListener('click', hideError);
 
-    // Keyboard shortcut: Escape to dismiss error
+    // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         hideError();
+      }
+      // Enter key triggers Authenticate on the auth screen
+      if (e.key === 'Enter' && state.currentScreen === 'auth') {
+        const btn = $('#btn-authenticate');
+        if (btn && !btn.disabled) {
+          e.preventDefault();
+          btn.click();
+        }
       }
     });
 
