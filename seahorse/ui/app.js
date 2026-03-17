@@ -198,8 +198,7 @@
 
         addProgressStep('Starting REST authentication...');
 
-        // REST flow - call authenticate command (future implementation)
-        const result = await invoke('rest_authenticate', {
+        const result = await invoke('run_rest_flow', {
           username, password, otp, signed
         });
 
@@ -207,8 +206,7 @@
       } else {
         addProgressStep('Opening browser...');
 
-        // Browser flow (future implementation)
-        const result = await invoke('browser_authenticate', {
+        const result = await invoke('run_browser_flow', {
           username, signed
         });
 

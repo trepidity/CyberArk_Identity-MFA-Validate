@@ -11,6 +11,8 @@ pub fn run() {
             commands::validate_assertion,
             commands::load_idp_cert,
             commands::save_raw_xml,
+            commands::run_rest_flow,
+            commands::run_browser_flow,
         ])
         .setup(|app| {
             use tauri::Manager;
