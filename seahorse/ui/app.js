@@ -19,6 +19,14 @@
     lastPrettyXml: null,
     idpCertInfo: null,
     unlistenProgress: null,
+    // Compare screen state
+    compareInputA: null,
+    compareInputB: null,
+    compareResult: null,
+    compareXmlA: null,
+    compareXmlB: null,
+    compareActiveTab: 'xml',
+    compareDiffsOnly: false,
   };
 
   // ---- DOM Refs ----
@@ -27,10 +35,11 @@
   const $$ = (sel) => document.querySelectorAll(sel);
 
   const screens = {
-    home:   $('#screen-home'),
-    auth:   $('#screen-auth'),
-    result: $('#screen-result'),
-    viewer: $('#screen-viewer'),
+    home:    $('#screen-home'),
+    auth:    $('#screen-auth'),
+    result:  $('#screen-result'),
+    viewer:  $('#screen-viewer'),
+    compare: $('#screen-compare'),
   };
 
   // ---- Screen Navigation ----
@@ -105,6 +114,9 @@
     $('#btn-tst').addEventListener('click', () => loadEnvironment('TST'));
     $('#btn-viewer').addEventListener('click', () => {
       showScreen('viewer');
+    });
+    $('#btn-compare').addEventListener('click', () => {
+      showScreen('compare');
     });
   }
 
@@ -717,6 +729,560 @@
     return div.innerHTML;
   }
 
+  // ---- Compare Screen ----
+
+  function initCompare() {
+    // Back button: if results visible → go back to input; else → home
+    $('#compare-back').addEventListener('click', () => {
+      const resultsPhase = $('#compare-results-phase');
+      if (!resultsPhase.classList.contains('hidden')) {
+        resultsPhase.classList.add('hidden');
+        $('#compare-input-phase').classList.remove('hidden');
+      } else {
+        showScreen('home');
+      }
+    });
+
+    // File / clipboard load for each side
+    $('#btn-open-file-a').addEventListener('click', () => loadCompareFile('a'));
+    $('#btn-open-file-b').addEventListener('click', () => loadCompareFile('b'));
+    $('#btn-paste-a').addEventListener('click', () => pasteCompare('a'));
+    $('#btn-paste-b').addEventListener('click', () => pasteCompare('b'));
+
+    // Run comparison
+    $('#btn-compare-go').addEventListener('click', runComparison);
+
+    // Tab switching
+    $$('.compare-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        $$('.compare-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        state.compareActiveTab = tab.dataset.ctab;
+        renderCompareTab();
+      });
+    });
+
+    // Diffs-only toggle
+    $('#btn-diffs-only').addEventListener('click', () => {
+      state.compareDiffsOnly = !state.compareDiffsOnly;
+      $('#btn-diffs-only').classList.toggle('active', state.compareDiffsOnly);
+      renderCompareTab();
+    });
+
+    // Load IDP / Chain cert for compare screen
+    $('#btn-load-idp-compare').addEventListener('click', async () => {
+      await loadIdpCert();
+      if (state.compareResult) {
+        await revalidateComparison();
+      }
+    });
+
+    $('#btn-load-chain-compare').addEventListener('click', async () => {
+      await loadChainCert();
+      if (state.compareResult) {
+        await revalidateComparison();
+      }
+    });
+  }
+
+  async function loadCompareFile(side) {
+    try {
+      const file = await openFileDialog([
+        { name: 'SAML/XML', extensions: ['xml', 'saml', 'txt', 'b64'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]);
+      if (!file) return;
+      const filePath = typeof file === 'string' ? file : file.path;
+      if (!filePath) return;
+
+      try {
+        const response = await fetch(convertFileSrc(filePath));
+        const text = await response.text();
+        $('#compare-input-' + side).value = text;
+        setCompareStatus(side, 'File loaded', 'success');
+      } catch (e) {
+        showError('Could not read file: ' + String(e));
+      }
+    } catch (e) {
+      showError(String(e));
+    }
+  }
+
+  async function pasteCompare(side) {
+    try {
+      const text = await clipboardRead();
+      if (text) {
+        $('#compare-input-' + side).value = text;
+        setCompareStatus(side, 'Pasted from clipboard', 'success');
+      } else {
+        setCompareStatus(side, 'Clipboard is empty', 'error');
+      }
+    } catch (e) {
+      showError('Failed to read clipboard: ' + String(e));
+    }
+  }
+
+  function setCompareStatus(side, msg, type) {
+    const el = $('#compare-status-' + side);
+    el.textContent = msg;
+    el.className = 'compare-status' + (type ? ' ' + type : '');
+  }
+
+  async function runComparison() {
+    const inputA = $('#compare-input-a').value.trim();
+    const inputB = $('#compare-input-b').value.trim();
+
+    if (!inputA) {
+      showError('Assertion A is required');
+      return;
+    }
+    if (!inputB) {
+      showError('Assertion B is required');
+      return;
+    }
+
+    const spinner = $('#compare-spinner');
+    spinner.classList.remove('hidden');
+    $('#btn-compare-go').disabled = true;
+
+    try {
+      const result = await invoke('compare_saml', { inputA, inputB });
+      state.compareResult = result;
+      state.compareInputA = inputA;
+      state.compareInputB = inputB;
+
+      // Switch to results phase
+      $('#compare-input-phase').classList.add('hidden');
+      $('#compare-results-phase').classList.remove('hidden');
+
+      // Reset to XML tab
+      state.compareActiveTab = 'xml';
+      state.compareDiffsOnly = false;
+      $('#btn-diffs-only').classList.remove('active');
+      $$('.compare-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.ctab === 'xml');
+      });
+
+      renderCompareTab();
+    } catch (e) {
+      showError(String(e));
+    } finally {
+      spinner.classList.add('hidden');
+      $('#btn-compare-go').disabled = false;
+    }
+  }
+
+  async function revalidateComparison() {
+    if (!state.compareInputA || !state.compareInputB) return;
+
+    try {
+      const result = await invoke('compare_saml', {
+        inputA: state.compareInputA,
+        inputB: state.compareInputB,
+      });
+      state.compareResult = result;
+      renderCompareTab();
+    } catch (e) {
+      showError('Re-validation failed: ' + String(e));
+    }
+  }
+
+  // ---- Compare Rendering ----
+
+  function renderCompareTab() {
+    const result = state.compareResult;
+    if (!result) return;
+
+    const content = $('#compare-content');
+
+    // Update diff count display
+    const xmlCount = result.xml_diff.diff_count;
+    const hexDiffRows = result.hex_diff.filter(r => r.diffs.length > 0).length;
+    const c14nCount = result.c14n_diff.diff_count;
+    $('#compare-diff-count').textContent =
+      xmlCount + ' XML diff' + (xmlCount !== 1 ? 's' : '') +
+      ', ' + hexDiffRows + ' hex row' + (hexDiffRows !== 1 ? 's' : '');
+
+    switch (state.compareActiveTab) {
+      case 'xml':
+        content.innerHTML = renderLineDiff(result.xml_diff, 'Assertion A', 'Assertion B');
+        break;
+      case 'hex':
+        content.innerHTML = renderHexDiff(result.hex_diff);
+        break;
+      case 'c14n':
+        content.innerHTML = renderLineDiff(result.c14n_diff, 'C14N A', 'C14N B');
+        break;
+      case 'validation':
+        content.innerHTML = renderValidationDiff(result.validation_a, result.validation_b);
+        break;
+      case 'all':
+        content.innerHTML = renderAllTab(result);
+        // Wire up collapsible section headers after inserting HTML
+        content.querySelectorAll('.compare-section-header').forEach(header => {
+          header.addEventListener('click', () => {
+            header.classList.toggle('collapsed');
+            const body = header.nextElementSibling;
+            if (body) body.classList.toggle('collapsed');
+          });
+        });
+        break;
+      default:
+        content.innerHTML = '';
+    }
+
+    syncDiffScroll(content);
+  }
+
+  function renderLineDiff(diff, titleA, titleB) {
+    const lines = diff.lines;
+
+    // Build filtered line list: [{ lineIdx, lineObj, side }] for each pane
+    // We need left pane (A) and right pane (B) to be aligned.
+    // Strategy: process each DiffLine into one row per pane.
+    // Same → show on both sides
+    // Removed → show on left, blank on right
+    // Added → blank on left, show on right
+    // Changed → show left on left pane, right on right pane
+
+    let filteredLines = lines;
+    if (state.compareDiffsOnly) {
+      // Keep diff lines + 2 lines of context
+      const include = new Array(lines.length).fill(false);
+      lines.forEach((line, i) => {
+        if (line.type !== 'Same') {
+          const start = Math.max(0, i - 2);
+          const end = Math.min(lines.length, i + 3);
+          for (let k = start; k < end; k++) include[k] = true;
+        }
+      });
+      filteredLines = lines.filter((_, i) => include[i]);
+    }
+
+    if (filteredLines.length === 0 || (state.compareDiffsOnly && diff.diff_count === 0)) {
+      return '<div class="compare-no-diffs">No differences found</div>';
+    }
+
+    let leftRows = '';
+    let rightRows = '';
+    let leftLineNum = 0;
+    let rightLineNum = 0;
+
+    filteredLines.forEach(line => {
+      const type = line.type;
+      if (type === 'Same') {
+        leftLineNum++;
+        rightLineNum++;
+        const escaped = escapeHtml(line.text);
+        leftRows  += diffLineHtml(leftLineNum,  escaped, 'same');
+        rightRows += diffLineHtml(rightLineNum, escaped, 'same');
+      } else if (type === 'Removed') {
+        leftLineNum++;
+        const escaped = escapeHtml(line.text);
+        leftRows  += diffLineHtml(leftLineNum, escaped, 'removed');
+        rightRows += diffLineHtml(null, '', 'blank');
+      } else if (type === 'Added') {
+        rightLineNum++;
+        const escaped = escapeHtml(line.text);
+        leftRows  += diffLineHtml(null, '', 'blank');
+        rightRows += diffLineHtml(rightLineNum, escaped, 'added');
+      } else if (type === 'Changed') {
+        leftLineNum++;
+        rightLineNum++;
+        const leftHtml  = highlightSpans(line.left,  line.left_spans,  'red');
+        const rightHtml = highlightSpans(line.right, line.right_spans, 'green');
+        leftRows  += diffLineHtml(leftLineNum,  leftHtml,  'removed');
+        rightRows += diffLineHtml(rightLineNum, rightHtml, 'added');
+      }
+    });
+
+    return (
+      '<div class="diff-split">' +
+        '<div class="diff-pane">' +
+          '<div class="diff-pane-title">' + escapeHtml(titleA) + '</div>' +
+          leftRows +
+        '</div>' +
+        '<div class="diff-pane">' +
+          '<div class="diff-pane-title">' + escapeHtml(titleB) + '</div>' +
+          rightRows +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function diffLineHtml(lineNum, contentHtml, cssClass) {
+    const numStr = lineNum !== null
+      ? '<span class="diff-line-num">' + lineNum + '</span>'
+      : '<span class="diff-line-num"></span>';
+    return '<div class="diff-line ' + cssClass + '">' + numStr + contentHtml + '</div>';
+  }
+
+  function highlightSpans(text, spans, color) {
+    if (!spans || spans.length === 0) return escapeHtml(text);
+
+    const chars = [...text]; // Unicode-safe spread
+    let html = '';
+    let pos = 0;
+
+    spans.forEach(([start, end]) => {
+      // Before span: plain text
+      if (pos < start) {
+        html += escapeHtml(chars.slice(pos, start).join(''));
+      }
+      // Span: highlighted
+      html += '<span class="diff-highlight-' + color + '">' +
+        escapeHtml(chars.slice(start, end).join('')) +
+        '</span>';
+      pos = end;
+    });
+
+    // Remainder
+    if (pos < chars.length) {
+      html += escapeHtml(chars.slice(pos).join(''));
+    }
+
+    return html;
+  }
+
+  function renderHexDiff(rows) {
+    let filteredRows = rows;
+    if (state.compareDiffsOnly) {
+      filteredRows = rows.filter(r => r.diffs.length > 0);
+    }
+
+    if (filteredRows.length === 0) {
+      return '<div class="compare-no-diffs">No differences found</div>';
+    }
+
+    let leftRows = '';
+    let rightRows = '';
+
+    filteredRows.forEach(row => {
+      const offsetHex = row.offset.toString(16).padStart(8, '0');
+      const offsetHtml = '<span class="hex-offset">' + offsetHex + '</span>  ';
+
+      leftRows  += '<div class="diff-line">' + offsetHtml + hexBytesHtml(row.left_bytes,  row.diffs) + '  ' + hexAsciiHtml(row.left_bytes,  row.diffs) + '</div>';
+      rightRows += '<div class="diff-line">' + offsetHtml + hexBytesHtml(row.right_bytes, row.diffs) + '  ' + hexAsciiHtml(row.right_bytes, row.diffs) + '</div>';
+    });
+
+    return (
+      '<div class="diff-split">' +
+        '<div class="diff-pane">' +
+          '<div class="diff-pane-title">Bytes A</div>' +
+          leftRows +
+        '</div>' +
+        '<div class="diff-pane">' +
+          '<div class="diff-pane-title">Bytes B</div>' +
+          rightRows +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function hexBytesHtml(bytes, diffIndices) {
+    const diffSet = new Set(diffIndices);
+    let html = '';
+    for (let i = 0; i < 16; i++) {
+      if (i === 8) html += ' '; // gap after first 8 bytes
+      if (i < bytes.length) {
+        const hex = bytes[i].toString(16).padStart(2, '0');
+        if (diffSet.has(i)) {
+          html += '<span class="hex-diff">' + hex + '</span> ';
+        } else {
+          html += '<span class="hex-byte">' + hex + '</span> ';
+        }
+      } else {
+        html += '   '; // 3 chars placeholder (2 hex + 1 space)
+      }
+    }
+    return html;
+  }
+
+  function hexAsciiHtml(bytes, diffIndices) {
+    const diffSet = new Set(diffIndices);
+    let html = '<span class="hex-ascii">|';
+    for (let i = 0; i < 16; i++) {
+      if (i < bytes.length) {
+        const b = bytes[i];
+        const ch = (b >= 32 && b < 127) ? String.fromCharCode(b) : '.';
+        if (diffSet.has(i)) {
+          html += '<span class="hex-diff">' + escapeHtml(ch) + '</span>';
+        } else {
+          html += escapeHtml(ch);
+        }
+      } else {
+        html += ' ';
+      }
+    }
+    html += '|</span>';
+    return html;
+  }
+
+  function renderValidationDiff(valA, valB) {
+    const checksA = valA.checks || [];
+    const checksB = valB.checks || [];
+
+    // Align checks by name
+    const allNames = [];
+    const seenNames = new Set();
+    checksA.forEach(c => { if (!seenNames.has(c.name)) { seenNames.add(c.name); allNames.push(c.name); } });
+    checksB.forEach(c => { if (!seenNames.has(c.name)) { seenNames.add(c.name); allNames.push(c.name); } });
+
+    const mapA = Object.fromEntries(checksA.map(c => [c.name, c]));
+    const mapB = Object.fromEntries(checksB.map(c => [c.name, c]));
+
+    let rows = '';
+    allNames.forEach(name => {
+      const cA = mapA[name] || null;
+      const cB = mapB[name] || null;
+      const { text: textA, cls: clsA } = checkDisplay(cA);
+      const { text: textB, cls: clsB } = checkDisplay(cB);
+      const differs = cA && cB && cA.passed !== cB.passed;
+      const rowClass = differs ? ' class="diff-row"' : '';
+      rows += '<tr' + rowClass + '>' +
+        '<td>' + escapeHtml(name) + '</td>' +
+        '<td class="' + clsA + '">' + escapeHtml(textA) + '</td>' +
+        '<td class="' + clsB + '">' + escapeHtml(textB) + '</td>' +
+        '</tr>';
+    });
+
+    // Summary rows
+    const sumA = (valA.summary || '').toLowerCase();
+    const sumB = (valB.summary || '').toLowerCase();
+    const sumDiffers = sumA !== sumB;
+    const sumRowClass = sumDiffers ? ' class="diff-row"' : '';
+
+    const html =
+      '<table class="val-compare-table">' +
+        '<thead><tr>' +
+          '<th>Check</th>' +
+          '<th>Assertion A</th>' +
+          '<th>Assertion B</th>' +
+        '</tr></thead>' +
+        '<tbody>' +
+        '<tr' + sumRowClass + '>' +
+          '<td><strong>Summary</strong></td>' +
+          '<td class="' + summaryClass(sumA) + '">' + escapeHtml(valA.summary || '') + '</td>' +
+          '<td class="' + summaryClass(sumB) + '">' + escapeHtml(valB.summary || '') + '</td>' +
+        '</tr>' +
+        rows +
+        '</tbody>' +
+      '</table>' +
+      '<div class="val-footer">' +
+        '<span>A: ' + escapeHtml(valA.algorithm || '—') + ' | ' + escapeHtml(valA.cert_subject || 'no cert') + '</span>' +
+        '&nbsp;&nbsp;' +
+        '<span>B: ' + escapeHtml(valB.algorithm || '—') + ' | ' + escapeHtml(valB.cert_subject || 'no cert') + '</span>' +
+      '</div>';
+
+    return html;
+  }
+
+  function checkDisplay(check) {
+    if (!check) return { text: '—', cls: 'skip' };
+    return {
+      text: (check.passed ? '\u2713 ' : '\u2717 ') + check.detail,
+      cls: check.passed ? 'pass' : 'fail',
+    };
+  }
+
+  function summaryClass(summary) {
+    if (summary === 'trusted' || summary === 'valid') return 'pass';
+    if (summary === 'failed') return 'fail';
+    return 'skip';
+  }
+
+  function renderAllTab(result) {
+    const xmlCount   = result.xml_diff.diff_count;
+    const hexDiffRows = result.hex_diff.filter(r => r.diffs.length > 0).length;
+    const c14nCount  = result.c14n_diff.diff_count;
+    const sumA = (result.validation_a.summary || '').toLowerCase();
+    const sumB = (result.validation_b.summary || '').toLowerCase();
+
+    const summaryCards =
+      '<div class="compare-summary-row">' +
+        '<div class="compare-summary-card">' +
+          '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">XML Diffs</div>' +
+          '<div style="font-size:1.25rem;font-weight:700;color:' + (xmlCount > 0 ? 'var(--red)' : 'var(--green)') + '">' + xmlCount + '</div>' +
+        '</div>' +
+        '<div class="compare-summary-card">' +
+          '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">Hex Rows Differ</div>' +
+          '<div style="font-size:1.25rem;font-weight:700;color:' + (hexDiffRows > 0 ? 'var(--yellow)' : 'var(--green)') + '">' + hexDiffRows + '</div>' +
+        '</div>' +
+        '<div class="compare-summary-card">' +
+          '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">C14N Diffs</div>' +
+          '<div style="font-size:1.25rem;font-weight:700;color:' + (c14nCount > 0 ? 'var(--red)' : 'var(--green)') + '">' + c14nCount + '</div>' +
+        '</div>' +
+        '<div class="compare-summary-card">' +
+          '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">Validation A</div>' +
+          '<div style="font-size:1rem;font-weight:600;color:' + summaryColor(sumA) + '">' + escapeHtml(result.validation_a.summary || '—') + '</div>' +
+        '</div>' +
+        '<div class="compare-summary-card">' +
+          '<div style="font-size:0.75rem;color:var(--text-dim);margin-bottom:4px">Validation B</div>' +
+          '<div style="font-size:1rem;font-weight:600;color:' + summaryColor(sumB) + '">' + escapeHtml(result.validation_b.summary || '—') + '</div>' +
+        '</div>' +
+      '</div>';
+
+    const sections =
+      sectionBlock('Validation', renderValidationDiff(result.validation_a, result.validation_b)) +
+      sectionBlock('XML Diff', renderLineDiff(result.xml_diff, 'Assertion A', 'Assertion B')) +
+      sectionBlock('Hex / Bytes', renderHexDiff(result.hex_diff)) +
+      sectionBlock('Canonicalized', renderLineDiff(result.c14n_diff, 'C14N A', 'C14N B'));
+
+    return summaryCards + sections;
+  }
+
+  function summaryColor(summary) {
+    if (summary === 'trusted' || summary === 'valid') return 'var(--green)';
+    if (summary === 'failed') return 'var(--red)';
+    return 'var(--text-secondary)';
+  }
+
+  function sectionBlock(title, contentHtml) {
+    return (
+      '<div style="margin-bottom:16px">' +
+        '<div class="compare-section-header">' +
+          '<span class="arrow">\u25bc</span>' +
+          '<span>' + escapeHtml(title) + '</span>' +
+        '</div>' +
+        '<div class="compare-section-body">' +
+          contentHtml +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function syncDiffScroll(container) {
+    const panes = Array.from((container || document).querySelectorAll('.diff-split .diff-pane'));
+    // Process each diff-split independently
+    const splits = Array.from((container || document).querySelectorAll('.diff-split'));
+    splits.forEach(split => {
+      const splitPanes = Array.from(split.querySelectorAll('.diff-pane'));
+      if (splitPanes.length < 2) return;
+      splitPanes.forEach((pane, idx) => {
+        // Remove old listeners by cloning, then re-attach
+        pane.onscroll = null;
+      });
+
+      let syncing = false;
+      splitPanes.forEach((pane, idx) => {
+        pane.addEventListener('scroll', () => {
+          if (syncing) return;
+          syncing = true;
+          splitPanes.forEach((other, otherIdx) => {
+            if (otherIdx !== idx) {
+              other.scrollTop  = pane.scrollTop;
+              other.scrollLeft = pane.scrollLeft;
+            }
+          });
+          syncing = false;
+        });
+      });
+    });
+
+    // Suppress unused variable warning
+    void panes;
+  }
+
   // ---- Initialization ----
 
   function init() {
@@ -724,6 +1290,7 @@
     initAuth();
     initViewer();
     initResult();
+    initCompare();
 
     // Error toast dismiss
     $('#error-dismiss').addEventListener('click', hideError);
