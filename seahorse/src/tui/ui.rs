@@ -18,6 +18,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Error => render_error(frame, app),
         Screen::SamlInput => render_saml_input(frame, app),
         Screen::SamlView => render_saml_view(frame, app),
+        Screen::CompareInput | Screen::CompareView => {}
     }
 }
 

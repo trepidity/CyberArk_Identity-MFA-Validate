@@ -75,6 +75,7 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
                 Screen::Error => handle_error(app, key.code),
                 Screen::SamlInput => handle_saml_input(app, key.code),
                 Screen::SamlView => handle_saml_view(app, key.code),
+                Screen::CompareInput | Screen::CompareView => {}
             }
         }
     }

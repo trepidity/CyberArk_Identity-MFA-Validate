@@ -16,6 +16,8 @@ pub enum Screen {
     Error,
     SamlInput,
     SamlView,
+    CompareInput,
+    CompareView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,6 +45,37 @@ pub enum SigningMode {
 pub enum SamlInputMode {
     Paste,
     File,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CompareMode {
+    Xml,
+    Hex,
+    C14n,
+    Validation,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComparePane {
+    pub input_mode: SamlInputMode,
+    pub paste_buffer: String,
+    pub file_path: String,
+    pub raw_bytes: Option<Vec<u8>>,
+    pub decoded_xml: Option<String>,
+    pub decode_status: Option<String>,
+}
+
+impl Default for ComparePane {
+    fn default() -> Self {
+        Self {
+            input_mode: SamlInputMode::Paste,
+            paste_buffer: String::new(),
+            file_path: String::new(),
+            raw_bytes: None,
+            decoded_xml: None,
+            decode_status: None,
+        }
+    }
 }
 
 pub struct App {
@@ -84,6 +117,17 @@ pub struct App {
     pub idp_trust_store: Option<IdpTrustStore>,
     pub idp_cert_input: String,
     pub idp_cert_input_active: bool,
+    // Compare mode
+    pub compare_active_pane: usize,
+    pub compare_panes: [ComparePane; 2],
+    pub compare_mode: CompareMode,
+    pub compare_diff_only: bool,
+    pub compare_scroll_offset: u16,
+    pub compare_h_scroll_offset: u16,
+    pub compare_diff_result: Option<crate::saml::diff::DiffResult>,
+    pub compare_byte_diff: Option<Vec<crate::saml::diff::ByteDiffRow>>,
+    pub compare_c14n_diff: Option<crate::saml::diff::DiffResult>,
+    pub compare_validation: Option<(crate::saml::validator::ValidationReport, crate::saml::validator::ValidationReport)>,
 }
 
 impl Default for App {
@@ -131,6 +175,16 @@ impl App {
             idp_trust_store: None,
             idp_cert_input: String::new(),
             idp_cert_input_active: false,
+            compare_active_pane: 0,
+            compare_panes: [ComparePane::default(), ComparePane::default()],
+            compare_mode: CompareMode::Xml,
+            compare_diff_only: false,
+            compare_scroll_offset: 0,
+            compare_h_scroll_offset: 0,
+            compare_diff_result: None,
+            compare_byte_diff: None,
+            compare_c14n_diff: None,
+            compare_validation: None,
         }
     }
 
