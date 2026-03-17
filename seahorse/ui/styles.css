@@ -245,6 +245,11 @@ body {
   font-size: 0.85rem;
 }
 
+.home-tool-buttons {
+  display: flex;
+  gap: 16px;
+}
+
 /* ---- Error Toast ---- */
 
 .error-toast {
@@ -806,11 +811,20 @@ body {
 
 /* ---- Compare Input Phase ---- */
 
+#compare-input-phase {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .compare-panels {
   display: flex;
   flex-direction: row;
   gap: 16px;
   margin-bottom: 16px;
+  flex: 1;
+  min-height: 0;
 }
 
 .compare-panel {
@@ -818,6 +832,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+}
+
+.compare-panel .saml-textarea {
+  flex: 1;
+  min-height: 120px;
+  resize: none;
 }
 
 .compare-panel-actions {
