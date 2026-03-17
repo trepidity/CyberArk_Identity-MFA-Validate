@@ -334,26 +334,66 @@ async fn accept_saml_callback(listener: tokio::net::TcpListener) -> Result<Strin
             continue; // Wait for the actual POST
         }
 
-        // Handle POST with SAMLResponse
-        let resp = format!("HTTP/1.1 200 OK\r\n{cors_headers}Content-Length: 2\r\n\r\nOK");
+        // Handle POST with SAMLResponse — respond with a "done" page
+        let done_html = "<html><body style='display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666'><p>Authentication complete. This window will close.</p></body></html>";
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\n{cors_headers}Content-Type: text/html\r\nContent-Length: {}\r\n\r\n{done_html}",
+            done_html.len()
+        );
         let _ = stream.write_all(resp.as_bytes()).await;
 
-        // Extract body
+        // Extract body (form POST sends: SAMLResponse=<url-encoded-base64>)
         let body_start = buf[..total]
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
             .map(|p| p + 4)
             .unwrap_or(0);
-        let body = String::from_utf8_lossy(&buf[body_start..total])
+        let raw_body = String::from_utf8_lossy(&buf[body_start..total])
             .trim()
             .to_string();
 
-        if body.is_empty() {
-            continue; // Might be a stray request, keep waiting
+        if raw_body.is_empty() {
+            continue;
         }
 
-        return Ok(body);
+        // Parse URL-encoded form data: SAMLResponse=<value>
+        let saml_b64 = if raw_body.starts_with("SAMLResponse=") {
+            let encoded = &raw_body["SAMLResponse=".len()..];
+            // URL-decode the value (base64 has +, =, / that get percent-encoded)
+            percent_decode(encoded)
+        } else {
+            // Might be plain text body
+            raw_body
+        };
+
+        if saml_b64.is_empty() {
+            continue;
+        }
+
+        return Ok(saml_b64);
     }
+}
+
+/// Simple percent-decode for URL-encoded form data.
+fn percent_decode(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '%' => {
+                let hex: String = chars.by_ref().take(2).collect();
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                } else {
+                    result.push('%');
+                    result.push_str(&hex);
+                }
+            }
+            '+' => result.push(' '),
+            _ => result.push(c),
+        }
+    }
+    result
 }
 
 // --- Helper: build SAML assertion XML ---
@@ -548,11 +588,20 @@ fn build_intercept_js(callback_port: u16) -> String {
     function sendToRust(value) {{
         if (captured) return;
         captured = true;
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', CALLBACK_URL, true);
-        xhr.setRequestHeader('Content-Type', 'text/plain');
-        xhr.send(value);
-        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666"><p>Authentication complete. This window will close.</p></div>';
+        // Use a form POST (top-level navigation) instead of XHR.
+        // XHR from HTTPS to HTTP localhost is blocked by mixed-content policy.
+        // Form POST navigation is not subject to this restriction.
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = CALLBACK_URL;
+        var input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'SAMLResponse';
+        input.value = value;
+        form.appendChild(input);
+        document.body.innerHTML = '';
+        document.body.appendChild(form);
+        form.submit();
     }}
 
     // Layer 1: Override HTMLFormElement.prototype.submit() globally.
