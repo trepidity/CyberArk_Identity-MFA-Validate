@@ -91,8 +91,9 @@ pub fn load_config(
     state: State<'_, Mutex<AppState>>,
     environment: Option<String>,
 ) -> Result<ConfigInfo, String> {
-    let base = find_config_base_path()
-        .ok_or_else(|| "Could not find config/ directory. Run from the project root.".to_string())?;
+    let base = find_config_base_path().ok_or_else(|| {
+        "Could not find config/ directory. Run from the project root.".to_string()
+    })?;
 
     let env = match environment.as_deref() {
         Some("TST") | Some("tst") => seahorse::config::Environment::Tst,
@@ -152,17 +153,15 @@ pub fn decode_saml(
 
         match result.document_type {
             seahorse::saml::decoder::SamlDocumentType::AuthnRequest => {
-                let details =
-                    seahorse::saml::parser::extract_authn_request_details(&result.xml)
-                        .map_err(|e| format!("Failed to parse AuthnRequest: {}", e))?;
+                let details = seahorse::saml::parser::extract_authn_request_details(&result.xml)
+                    .map_err(|e| format!("Failed to parse AuthnRequest: {}", e))?;
                 DecodedSaml::AuthnRequest {
                     details,
                     pretty_xml,
                 }
             }
             seahorse::saml::decoder::SamlDocumentType::Response => {
-                let response =
-                    seahorse::saml::parser::extract_response_details(&result.xml).ok();
+                let response = seahorse::saml::parser::extract_response_details(&result.xml).ok();
 
                 let (assertion, attributes, validation) =
                     match seahorse::saml::parser::extract_assertion_from_response(&result.xml) {
@@ -170,9 +169,8 @@ pub fn decode_saml(
                             let assertion_details =
                                 seahorse::saml::parser::extract_assertion_details(&assertion_xml)
                                     .ok();
-                            let attrs =
-                                seahorse::saml::parser::extract_attributes(&assertion_xml)
-                                    .unwrap_or_default();
+                            let attrs = seahorse::saml::parser::extract_attributes(&assertion_xml)
+                                .unwrap_or_default();
                             let sig = seahorse::saml::validator::validate_assertion(
                                 &assertion_xml,
                                 trust_store_ref,
@@ -194,15 +192,12 @@ pub fn decode_saml(
                 }
             }
             seahorse::saml::decoder::SamlDocumentType::Assertion => {
-                let details =
-                    seahorse::saml::parser::extract_assertion_details(&result.xml)
-                        .map_err(|e| format!("Failed to parse Assertion: {}", e))?;
-                let attributes = seahorse::saml::parser::extract_attributes(&result.xml)
-                    .unwrap_or_default();
-                let validation = seahorse::saml::validator::validate_assertion(
-                    &result.xml,
-                    trust_store_ref,
-                );
+                let details = seahorse::saml::parser::extract_assertion_details(&result.xml)
+                    .map_err(|e| format!("Failed to parse Assertion: {}", e))?;
+                let attributes =
+                    seahorse::saml::parser::extract_attributes(&result.xml).unwrap_or_default();
+                let validation =
+                    seahorse::saml::validator::validate_assertion(&result.xml, trust_store_ref);
 
                 DecodedSaml::Assertion {
                     details,
@@ -323,10 +318,8 @@ fn validate_assertion_xml(
 ) -> Result<DecodedSaml, String> {
     let details = seahorse::saml::parser::extract_assertion_details(assertion_xml)
         .map_err(|e| format!("Failed to parse assertion: {}", e))?;
-    let attributes =
-        seahorse::saml::parser::extract_attributes(assertion_xml).unwrap_or_default();
-    let validation =
-        seahorse::saml::validator::validate_assertion(assertion_xml, trust_store);
+    let attributes = seahorse::saml::parser::extract_attributes(assertion_xml).unwrap_or_default();
+    let validation = seahorse::saml::validator::validate_assertion(assertion_xml, trust_store);
     let pretty_xml = seahorse::saml::parser::pretty_print_xml(assertion_xml);
 
     Ok(DecodedSaml::Assertion {
@@ -356,10 +349,7 @@ pub async fn run_rest_flow(
             .config
             .clone()
             .ok_or("No configuration loaded. Go back and select an environment.")?;
-        let config_dir = guard
-            .config_dir
-            .clone()
-            .ok_or("No config directory set")?;
+        let config_dir = guard.config_dir.clone().ok_or("No config directory set")?;
         (config, config_dir)
     };
 
@@ -370,10 +360,9 @@ pub async fn run_rest_flow(
 
     // Step 2: StartAuthentication
     emit_progress(&app, "start_auth", "Calling StartAuthentication...");
-    let start_result =
-        seahorse::auth::rest_flow::start_authentication(&client, tenant, &username)
-            .await
-            .map_err(|e| format!("StartAuthentication failed: {}", e))?;
+    let start_result = seahorse::auth::rest_flow::start_authentication(&client, tenant, &username)
+        .await
+        .map_err(|e| format!("StartAuthentication failed: {}", e))?;
 
     let resolved_tenant = &start_result.tenant;
 
@@ -440,10 +429,7 @@ pub async fn run_rest_flow(
     .map_err(|e| format!("OTP authentication failed: {}", e))?;
 
     if !otp_result.success {
-        return Err(format!(
-            "OTP authentication failed: {}",
-            otp_result.summary
-        ));
+        return Err(format!("OTP authentication failed: {}", otp_result.summary));
     }
 
     // Step 6: Build SAML assertion (sync, no state lock needed)
@@ -533,10 +519,7 @@ pub async fn run_browser_flow(
             .config
             .clone()
             .ok_or("No configuration loaded. Go back and select an environment.")?;
-        let config_dir = guard
-            .config_dir
-            .clone()
-            .ok_or("No config directory set")?;
+        let config_dir = guard.config_dir.clone().ok_or("No config directory set")?;
         (config, config_dir)
     };
 
@@ -629,16 +612,14 @@ pub async fn run_browser_flow(
         .map_err(|e| format!("SAMLResponse is not valid UTF-8: {}", e))?;
 
     // Extract the assertion from the SAML Response
-    let assertion_xml =
-        seahorse::saml::parser::extract_assertion_from_response(&response_xml)
-            .map_err(|e| format!("Failed to extract assertion: {}", e))?;
+    let assertion_xml = seahorse::saml::parser::extract_assertion_from_response(&response_xml)
+        .map_err(|e| format!("Failed to extract assertion: {}", e))?;
 
     // Validate while holding state lock (for trust store reference)
     emit_progress(&app, "validating", "Validating assertion...");
     let decoded = {
         let mut guard = state.lock().unwrap();
-        let result =
-            validate_assertion_xml(&assertion_xml, guard.idp_trust_store.as_ref())?;
+        let result = validate_assertion_xml(&assertion_xml, guard.idp_trust_store.as_ref())?;
         guard.last_raw_xml = Some(assertion_xml);
         result
     };
