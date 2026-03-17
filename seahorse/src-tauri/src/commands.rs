@@ -452,37 +452,42 @@ pub async fn run_rest_flow(
 // --- Browser Flow Command ---
 
 /// JavaScript injected into the CyberArk login webview to intercept the SAMLResponse.
-/// Uses `document.title` to pass the captured value back to Rust, since:
-/// - window.__TAURI__ is not available on external URLs
-/// - XHR/fetch to http://localhost is blocked by mixed-content (HTTPS→HTTP)
-/// - Form POST to http://localhost is ALSO blocked by WebKit
 ///
-/// The Rust side polls `window.title()` to detect when the SAMLResponse is captured.
+/// Communication strategy: Tauri v2 CANNOT communicate with webviews showing external URLs
+/// via title(), events, XHR, or form POST (all blocked or broken).
+///
+/// What DOES work:
+/// - eval() can SEND JS to the webview (fire-and-forget, no response needed)
+/// - on_navigation() can INTERCEPT navigations before they happen
+///
+/// So: the initialization script captures the SAMLResponse and stores it in a global.
+/// Rust periodically eval()s a script to check if it's been captured and navigate to
+/// a special URL. The on_navigation() callback intercepts this navigation and extracts
+/// the SAMLResponse from the URL fragment.
 const INTERCEPT_JS: &str = r#"
 (function() {
     var captured = false;
+    window._seahorse_saml = null;
 
-    function sendToRust(value) {
+    function captureSaml(value) {
         if (captured) return;
         captured = true;
-        // Signal to Rust by setting the document title to a known prefix + the value.
-        // Rust polls window.title() and looks for the SAML_CAPTURED: prefix.
-        document.title = 'SAML_CAPTURED:' + value;
+        window._seahorse_saml = value;
         document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#666"><p>Authentication complete. This window will close.</p></div>';
     }
 
-    // Layer 1: Override HTMLFormElement.prototype.submit() globally.
+    // Layer 1: Override HTMLFormElement.prototype.submit()
     var originalSubmit = HTMLFormElement.prototype.submit;
     HTMLFormElement.prototype.submit = function() {
         var input = this.querySelector('input[name="SAMLResponse"]');
         if (input && input.value) {
-            sendToRust(input.value);
+            captureSaml(input.value);
             return;
         }
         originalSubmit.call(this);
     };
 
-    // Layer 2: Global submit event listener (capture phase).
+    // Layer 2: Global submit event listener (capture phase)
     document.addEventListener('submit', function(e) {
         var form = e.target;
         var input = form.querySelector('input[name="SAMLResponse"]');
@@ -490,18 +495,18 @@ const INTERCEPT_JS: &str = r#"
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            sendToRust(input.value);
+            captureSaml(input.value);
             return false;
         }
     }, true);
 
-    // Layer 3: Poll for SAMLResponse input appearing in the DOM.
+    // Layer 3: Poll for SAMLResponse input in the DOM
     var checkInterval = setInterval(function() {
         var inputs = document.querySelectorAll('input[name="SAMLResponse"]');
         for (var i = 0; i < inputs.length; i++) {
             if (inputs[i].value) {
                 clearInterval(checkInterval);
-                sendToRust(inputs[i].value);
+                captureSaml(inputs[i].value);
                 return;
             }
         }
@@ -509,6 +514,16 @@ const INTERCEPT_JS: &str = r#"
 
     setTimeout(function() { clearInterval(checkInterval); }, 120000);
 })();
+"#;
+
+/// JS snippet that Rust periodically eval()s to check if the SAMLResponse was captured
+/// and trigger a navigation that on_navigation() can intercept.
+const CHECK_AND_NAVIGATE_JS: &str = r#"
+if (window._seahorse_saml) {
+    var v = window._seahorse_saml;
+    window._seahorse_saml = null;
+    window.location.href = 'seahorse://saml-captured#' + v;
+}
 "#;
 
 #[tauri::command]
@@ -543,23 +558,43 @@ pub async fn run_browser_flow(
         seahorse::auth::browser_flow::build_login_url(&config.url, &username, &config.appkey);
     info!("[browser_flow] Login URL: {}", login_url);
 
-    // Open a second Tauri webview window for the CyberArk login
-    // The JS intercept captures the SAMLResponse and sets it as document.title
-    let auth_window = tauri::WebviewWindowBuilder::new(
-        &app,
-        "cyberark-login",
-        tauri::WebviewUrl::External(
-            login_url
-                .parse()
-                .map_err(|e| format!("Invalid login URL: {}", e))?,
-        ),
-    )
-    .title("Seahorse - CyberArk Login")
-    .inner_size(800.0, 700.0)
-    .initialization_script(INTERCEPT_JS)
-    .build()
-    .map_err(|e| format!("Failed to open login window: {}", e))?;
-    info!("[browser_flow] Auth window opened");
+    // Channel: on_navigation callback → async command
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+    let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+
+    // Open the auth webview window with:
+    // 1. initialization_script: captures SAMLResponse, stores in window._seahorse_saml
+    // 2. on_navigation: intercepts "seahorse://saml-captured#<base64>" and sends via channel
+    let auth_window = {
+        let tx_clone = tx.clone();
+        tauri::WebviewWindowBuilder::new(
+            &app,
+            "cyberark-login",
+            tauri::WebviewUrl::External(
+                login_url
+                    .parse()
+                    .map_err(|e| format!("Invalid login URL: {}", e))?,
+            ),
+        )
+        .title("Seahorse - CyberArk Login")
+        .inner_size(800.0, 700.0)
+        .initialization_script(INTERCEPT_JS)
+        .on_navigation(move |url| {
+            if url.scheme() == "seahorse" {
+                if let Some(fragment) = url.fragment() {
+                    info!("[browser_flow] on_navigation: captured SAMLResponse ({} chars)", fragment.len());
+                    if let Some(sender) = tx_clone.lock().unwrap().take() {
+                        let _ = sender.send(fragment.to_string());
+                    }
+                }
+                return false; // Block navigation to fake scheme
+            }
+            true // Allow all real navigations
+        })
+        .build()
+        .map_err(|e| format!("Failed to open login window: {}", e))?
+    };
+    info!("[browser_flow] Auth window opened with on_navigation handler");
 
     emit_progress(
         &app,
@@ -567,48 +602,42 @@ pub async fn run_browser_flow(
         "Waiting for authentication in browser window...",
     );
 
-    // Poll the auth window's title for the SAMLResponse.
-    // The injected JS sets document.title = "SAML_CAPTURED:<base64>" when it intercepts the response.
-    // We poll by evaluating JS to read document.title from the webview.
-    // We tolerate errors during page navigations (title() and eval() can fail transiently).
-    info!("[browser_flow] Polling for SAMLResponse...");
-    let mut consecutive_errors: u32 = 0;
-    let start_time = tokio::time::Instant::now();
-    let timeout = tokio::time::Duration::from_secs(300);
+    // Periodically eval() the check script.
+    // The init script stores SAMLResponse in window._seahorse_saml.
+    // The eval'd script reads it and navigates to seahorse://saml-captured#<base64>.
+    // The on_navigation callback intercepts this and sends the value via the channel.
+    let eval_window = auth_window.clone();
+    let poll_handle = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if eval_window.eval(CHECK_AND_NAVIGATE_JS).is_err() {
+                // Window might be navigating or closed — ignore errors
+            }
+        }
+    });
 
-    let saml_b64 = loop {
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-
-        // Timeout after 5 minutes
-        if start_time.elapsed() > timeout {
+    // Wait for SAMLResponse or timeout
+    let saml_b64 = tokio::select! {
+        result = rx => {
+            match result {
+                Ok(b64) => {
+                    info!("[browser_flow] Received SAMLResponse via channel ({} chars)", b64.len());
+                    b64
+                }
+                Err(_) => {
+                    return Err("Authentication channel closed unexpectedly".to_string());
+                }
+            }
+        }
+        _ = tokio::time::sleep(tokio::time::Duration::from_secs(300)) => {
             info!("[browser_flow] Timeout");
+            poll_handle.abort();
             let _ = auth_window.close();
             return Err("Authentication timed out after 5 minutes".to_string());
         }
-
-        // Try reading the window title (native title, may reflect document.title on macOS)
-        match auth_window.title() {
-            Ok(title) => {
-                consecutive_errors = 0;
-                if let Some(b64) = title.strip_prefix("SAML_CAPTURED:") {
-                    info!("[browser_flow] SAMLResponse captured via native title ({} chars)", b64.len());
-                    break b64.to_string();
-                }
-            }
-            Err(e) => {
-                consecutive_errors += 1;
-                info!("[browser_flow] title() error ({}x): {}", consecutive_errors, e);
-                // Only give up after many consecutive errors (window truly gone)
-                if consecutive_errors > 50 {
-                    info!("[browser_flow] Window appears to be closed (50 consecutive errors)");
-                    return Err("Login window was closed without completing authentication".to_string());
-                }
-                continue;
-            }
-        }
-
     };
 
+    poll_handle.abort();
     info!("[browser_flow] Closing auth window...");
     let _ = auth_window.close();
 
