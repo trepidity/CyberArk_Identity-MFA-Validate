@@ -226,11 +226,229 @@ fn render_c14n_diff(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_validation_diff(frame: &mut Frame, _app: &App, area: Rect) {
+fn render_validation_diff(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
-        .title(" Validation (TODO) ")
-        .borders(Borders::ALL);
+        .title(" Validation Comparison ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let inner = block.inner(area);
     frame.render_widget(block, area);
+
+    let (left_report, right_report) = match &app.compare_validation {
+        Some(pair) => pair,
+        None => {
+            let msg = Paragraph::new("No validation data available.")
+                .style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(msg, inner);
+            return;
+        }
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    // Header row
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:<30}", "Check"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:<20}", "Assertion A"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:<20}", "Assertion B"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    // Separator
+    lines.push(Line::from(Span::styled(
+        "─".repeat(70),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    // Check rows
+    let max_checks = left_report.checks.len().max(right_report.checks.len());
+    for i in 0..max_checks {
+        let left_check = left_report.checks.get(i);
+        let right_check = right_report.checks.get(i);
+
+        let name = left_check
+            .or(right_check)
+            .map(|c| c.name.as_str())
+            .unwrap_or("(unknown)");
+
+        let (left_text, left_color) = check_display(left_check);
+        let (right_text, right_color) = check_display(right_check);
+
+        let results_differ = left_check.map(|c| c.passed) != right_check.map(|c| c.passed);
+        let row_bg = if results_differ {
+            Some(Color::DarkGray)
+        } else {
+            None
+        };
+
+        let make_span = |text: String, fg: Color| -> Span<'static> {
+            let style = if let Some(bg) = row_bg {
+                Style::default().fg(fg).bg(bg)
+            } else {
+                Style::default().fg(fg)
+            };
+            Span::styled(text, style)
+        };
+
+        lines.push(Line::from(vec![
+            make_span(format!("{:<30}", truncate(name, 29)), Color::White),
+            make_span(format!("{:<20}", left_text), left_color),
+            make_span(format!("{:<20}", right_text), right_color),
+        ]));
+    }
+
+    // Separator before footer
+    lines.push(Line::from(Span::styled(
+        "─".repeat(70),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    // Summary row
+    let left_summary = left_report.summary.message();
+    let right_summary = right_report.summary.message();
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:<30}", "Overall"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:<20}", truncate(left_summary, 19)),
+            Style::default().fg(summary_color(&left_report.summary)),
+        ),
+        Span::styled(
+            format!("{:<20}", truncate(right_summary, 19)),
+            Style::default().fg(summary_color(&right_report.summary)),
+        ),
+    ]));
+
+    // Algorithm row
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:<30}", "Algorithm"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{:<20}", short_algo(&left_report.algorithm)),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{:<20}", short_algo(&right_report.algorithm)),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    // Cert subject row
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:<30}", "Cert Subject"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{:<20}", truncate(&left_report.cert_subject, 19)),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{:<20}", truncate(&right_report.cert_subject, 19)),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    // Digest value row
+    let left_xml = app.compare_panes[0].decoded_xml.as_deref().unwrap_or("");
+    let right_xml = app.compare_panes[1].decoded_xml.as_deref().unwrap_or("");
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{:<30}", "Digest (12 chars)"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{:<20}", extract_digest_value(left_xml)),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!("{:<20}", extract_digest_value(right_xml)),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    let para = Paragraph::new(lines)
+        .scroll((app.compare_scroll_offset, app.compare_h_scroll_offset));
+    frame.render_widget(para, inner);
+}
+
+fn check_display(check: Option<&crate::saml::validator::ValidationCheck>) -> (String, Color) {
+    match check {
+        None => ("skipped".to_string(), Color::DarkGray),
+        Some(c) if c.passed => ("PASS".to_string(), Color::Green),
+        Some(_) => ("FAIL".to_string(), Color::Red),
+    }
+}
+
+fn short_algo(algo: &str) -> &str {
+    if algo.contains("sha256") || algo.contains("SHA256") || algo.contains("sha-256") || algo.contains("SHA-256") {
+        "SHA-256"
+    } else if algo.contains("sha1") || algo.contains("SHA1") || algo.contains("sha-1") || algo.contains("SHA-1") {
+        "SHA-1"
+    } else if algo.is_empty() {
+        "(none)"
+    } else {
+        algo
+    }
+}
+
+fn extract_digest_value(xml: &str) -> String {
+    if let Some(start) = xml.find("<ds:DigestValue>").or_else(|| xml.find("<DigestValue>")) {
+        let after_tag = if xml[start..].starts_with("<ds:DigestValue>") {
+            &xml[start + 16..]
+        } else {
+            &xml[start + 13..]
+        };
+        if let Some(end) = after_tag.find('<') {
+            let value = after_tag[..end].trim();
+            if value.len() > 12 {
+                return value[..12].to_string();
+            } else {
+                return value.to_string();
+            }
+        }
+    }
+    "(not found)".to_string()
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max.saturating_sub(1)])
+    }
+}
+
+fn summary_color(summary: &crate::saml::validator::ValidationSummary) -> Color {
+    use crate::saml::validator::ValidationSummary;
+    match summary {
+        ValidationSummary::Trusted => Color::Green,
+        ValidationSummary::Valid => Color::Green,
+        ValidationSummary::Partial => Color::Yellow,
+        ValidationSummary::Failed => Color::Red,
+        ValidationSummary::Unsigned => Color::DarkGray,
+    }
 }
 
 /// Shared line-diff renderer used for XML (Mode 1) and C14N (Mode 3).
@@ -744,13 +962,42 @@ pub fn compute_comparison(app: &mut App) {
         .unwrap_or_default();
     app.compare_byte_diff = Some(crate::saml::diff::diff_bytes(&left_bytes, &right_bytes));
 
+    // Mode 3: C14N diff
+    let left_c14n = compute_c14n_text(&left_xml);
+    let right_c14n = compute_c14n_text(&right_xml);
+    app.compare_c14n_diff = Some(crate::saml::diff::diff_lines(&left_c14n, &right_c14n));
+
     // Mode 4: validate both assertions
     let left_report =
         crate::saml::validator::validate_assertion(&left_xml, app.idp_trust_store.as_ref());
     let right_report =
         crate::saml::validator::validate_assertion(&right_xml, app.idp_trust_store.as_ref());
     app.compare_validation = Some((left_report, right_report));
+}
 
-    // Mode 3 (C14N diff) - leave as None for now; CompareView will handle
-    app.compare_c14n_diff = None;
+fn compute_c14n_text(xml: &str) -> String {
+    let without_sig = crate::saml::c14n::remove_signature_element(xml)
+        .unwrap_or_else(|_| xml.to_string());
+    let prefixes = extract_inclusive_prefixes(xml);
+    let prefix_refs: Vec<&str> = prefixes.iter().map(|s| s.as_str()).collect();
+    match crate::saml::c14n::canonicalize_exclusive(&without_sig, &prefix_refs) {
+        Ok(bytes) => {
+            let raw = String::from_utf8_lossy(&bytes).to_string();
+            crate::saml::parser::pretty_print_xml(&raw)
+        }
+        Err(_) => "(canonicalization failed)".to_string(),
+    }
+}
+
+fn extract_inclusive_prefixes(xml: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    if let Some(start) = xml.find("PrefixList=\"") {
+        let rest = &xml[start + 12..];
+        if let Some(end) = rest.find('"') {
+            for prefix in rest[..end].split_whitespace() {
+                prefixes.push(prefix.to_string());
+            }
+        }
+    }
+    prefixes
 }
