@@ -59,26 +59,27 @@ pub struct CertInfoDto {
 // --- Config path resolution ---
 
 fn find_config_base_path() -> Option<PathBuf> {
+    // Walk up from CWD looking for a config/ directory
     if let Ok(cwd) = std::env::current_dir() {
-        if cwd.join("config").is_dir() {
-            return Some(cwd);
-        }
-        if let Some(parent) = cwd.parent() {
-            if parent.join("config").is_dir() {
-                return Some(parent.to_path_buf());
+        let mut dir = cwd.as_path();
+        loop {
+            if dir.join("config").is_dir() {
+                return Some(dir.to_path_buf());
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
             }
         }
     }
+    // Walk up from executable location
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            if exe_dir.join("config").is_dir() {
-                return Some(exe_dir.to_path_buf());
+        let mut dir_opt = exe.parent();
+        while let Some(dir) = dir_opt {
+            if dir.join("config").is_dir() {
+                return Some(dir.to_path_buf());
             }
-            if let Some(parent) = exe_dir.parent() {
-                if parent.join("config").is_dir() {
-                    return Some(parent.to_path_buf());
-                }
-            }
+            dir_opt = dir.parent();
         }
     }
     None
