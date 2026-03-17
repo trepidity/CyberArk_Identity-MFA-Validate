@@ -569,25 +569,44 @@ pub async fn run_browser_flow(
 
     // Poll the auth window's title for the SAMLResponse.
     // The injected JS sets document.title = "SAML_CAPTURED:<base64>" when it intercepts the response.
-    // This avoids all IPC/HTTP/mixed-content issues.
-    info!("[browser_flow] Polling window title for SAMLResponse...");
-    let saml_b64 = loop {
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    // We poll by evaluating JS to read document.title from the webview.
+    // We tolerate errors during page navigations (title() and eval() can fail transiently).
+    info!("[browser_flow] Polling for SAMLResponse...");
+    let mut consecutive_errors: u32 = 0;
+    let start_time = tokio::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(300);
 
-        // Check if window was closed
+    let saml_b64 = loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        // Timeout after 5 minutes
+        if start_time.elapsed() > timeout {
+            info!("[browser_flow] Timeout");
+            let _ = auth_window.close();
+            return Err("Authentication timed out after 5 minutes".to_string());
+        }
+
+        // Try reading the window title (native title, may reflect document.title on macOS)
         match auth_window.title() {
             Ok(title) => {
+                consecutive_errors = 0;
                 if let Some(b64) = title.strip_prefix("SAML_CAPTURED:") {
-                    info!("[browser_flow] SAMLResponse captured via title ({} chars)", b64.len());
+                    info!("[browser_flow] SAMLResponse captured via native title ({} chars)", b64.len());
                     break b64.to_string();
                 }
             }
-            Err(_) => {
-                // Window was closed or destroyed
-                info!("[browser_flow] Auth window closed by user");
-                return Err("Login window was closed without completing authentication".to_string());
+            Err(e) => {
+                consecutive_errors += 1;
+                info!("[browser_flow] title() error ({}x): {}", consecutive_errors, e);
+                // Only give up after many consecutive errors (window truly gone)
+                if consecutive_errors > 50 {
+                    info!("[browser_flow] Window appears to be closed (50 consecutive errors)");
+                    return Err("Login window was closed without completing authentication".to_string());
+                }
+                continue;
             }
         }
+
     };
 
     info!("[browser_flow] Closing auth window...");
