@@ -256,6 +256,38 @@ pub fn load_idp_cert(
 }
 
 #[tauri::command]
+pub fn load_chain_cert(
+    state: State<'_, Mutex<AppState>>,
+    path: String,
+) -> Result<CertInfoDto, String> {
+    // Load the chain PEM — this uses the same loader which finds leaf + chain certs
+    let chain_store = seahorse::saml::trust::load_idp_certificates(Path::new(&path))
+        .map_err(|e| format!("Failed to load chain certificates: {}", e))?;
+
+    let mut guard = state.lock().unwrap();
+    let store = guard
+        .idp_trust_store
+        .as_mut()
+        .ok_or("Load an IDP certificate first, then add the chain")?;
+
+    // Add all certs from the chain file (both leaf and chain) as chain certs
+    let added = 1 + chain_store.chain_certs.len();
+    store.chain_certs.push(chain_store.leaf_cert);
+    for cert in chain_store.chain_certs {
+        store.chain_certs.push(cert);
+    }
+
+    let cn = seahorse::saml::trust::cert_cn(&store.leaf_cert);
+    let chain_count = store.chain_certs.len();
+
+    Ok(CertInfoDto {
+        cn,
+        chain_count,
+        source_path: format!("{} (+{} chain certs)", store.source_path.display(), added),
+    })
+}
+
+#[tauri::command]
 pub fn save_raw_xml(state: State<'_, Mutex<AppState>>, path: String) -> Result<(), String> {
     let xml = {
         let s = state.lock().unwrap();

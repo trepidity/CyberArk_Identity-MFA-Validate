@@ -255,6 +255,7 @@
     $('#btn-open-file').addEventListener('click', openSamlFile);
     $('#btn-paste-clipboard').addEventListener('click', pasteFromClipboard);
     $('#btn-load-idp-viewer').addEventListener('click', loadIdpCert);
+    $('#btn-load-chain-viewer').addEventListener('click', loadChainCert);
     $('#btn-decode').addEventListener('click', decodeAndValidate);
   }
 
@@ -368,6 +369,28 @@
     }
   }
 
+  async function loadChainCert() {
+    try {
+      const file = await openFileDialog([
+        { name: 'Certificates', extensions: ['pem', 'crt', 'cer'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]);
+      if (!file) return;
+      const filePath = typeof file === 'string' ? file : file.path;
+      if (!filePath) return;
+
+      const certInfo = await invoke('load_chain_cert', { path: filePath });
+      state.idpCertInfo = certInfo;
+      showStatus('Chain loaded: ' + certInfo.chain_count + ' chain cert(s)');
+
+      if (state.currentScreen === 'result' && state.lastRawXml) {
+        await revalidateCurrentResult();
+      }
+    } catch (e) {
+      showError(String(e));
+    }
+  }
+
   async function revalidateCurrentResult() {
     if (!state.lastRawXml) return;
 
@@ -391,6 +414,7 @@
     $('#btn-copy-xml').addEventListener('click', copyXml);
     $('#btn-save-xml').addEventListener('click', saveXml);
     $('#btn-load-idp-result').addEventListener('click', loadIdpCert);
+    $('#btn-load-chain-result').addEventListener('click', loadChainCert);
   }
 
   async function copyXml() {
