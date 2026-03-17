@@ -7,10 +7,174 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="app">
-    <h1>Seahorse</h1>
-    <p>SAML Validation Tool</p>
+
+  <!-- Error Toast -->
+  <div id="error-toast" class="error-toast hidden">
+    <span id="error-message"></span>
+    <button id="error-dismiss" class="error-dismiss" aria-label="Dismiss">&times;</button>
   </div>
+
+  <!-- Status Toast -->
+  <div id="status-toast" class="status-toast hidden">
+    <span id="status-message"></span>
+  </div>
+
+  <!-- Screen 1: Home -->
+  <section id="screen-home" class="screen active">
+    <div class="home-container">
+      <div class="home-logo">
+        <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="32" cy="32" r="28" stroke="#3b82f6" stroke-width="3" fill="none"/>
+          <path d="M20 38c4-8 8-14 12-14s8 6 12 14" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+          <circle cx="32" cy="24" r="4" fill="#3b82f6"/>
+        </svg>
+      </div>
+      <h1 class="home-title">Seahorse</h1>
+      <p class="home-subtitle">SAML Validation Tool</p>
+
+      <div class="home-env-buttons">
+        <button id="btn-prod" class="btn btn-prod">PROD</button>
+        <button id="btn-tst" class="btn btn-tst">TST</button>
+      </div>
+
+      <div class="home-divider">
+        <span class="home-divider-line"></span>
+        <span class="home-divider-text">or</span>
+        <span class="home-divider-line"></span>
+      </div>
+
+      <button id="btn-viewer" class="btn btn-neutral">View SAML Assertion</button>
+    </div>
+  </section>
+
+  <!-- Screen 2: Authentication -->
+  <section id="screen-auth" class="screen">
+    <div class="screen-content">
+      <header class="screen-header">
+        <button id="auth-back" class="btn-back" aria-label="Back">&larr; Back</button>
+        <h2 id="auth-env-label" class="screen-title">PROD</h2>
+      </header>
+
+      <div class="auth-container">
+        <div class="tab-bar">
+          <button class="tab active" data-tab="browser">Browser Flow</button>
+          <button class="tab" data-tab="rest">REST API Flow</button>
+        </div>
+
+        <div class="auth-form">
+          <div class="form-group">
+            <label for="auth-username">Username</label>
+            <input id="auth-username" type="text" placeholder="Enter username" autocomplete="off">
+          </div>
+
+          <div id="rest-fields" class="hidden">
+            <div class="form-group">
+              <label for="auth-password">Password</label>
+              <input id="auth-password" type="password" placeholder="Enter password">
+            </div>
+            <div class="form-group">
+              <label for="auth-otp">OTP Code</label>
+              <input id="auth-otp" type="text" placeholder="Enter OATH code" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="form-group-row">
+            <label class="radio-label">Signing:</label>
+            <label class="radio-option">
+              <input type="radio" name="signing" value="signed" checked> Signed
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="signing" value="unsigned"> Unsigned
+            </label>
+          </div>
+
+          <button id="btn-authenticate" class="btn btn-primary btn-full">Authenticate</button>
+        </div>
+
+        <div id="auth-progress" class="auth-progress hidden">
+          <div class="spinner"></div>
+          <ul id="auth-steps" class="auth-steps"></ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screen 3: Validation Result -->
+  <section id="screen-result" class="screen">
+    <div class="screen-content result-layout">
+      <header class="screen-header">
+        <button id="result-back" class="btn-back" aria-label="Back">&larr; Back</button>
+        <h2 class="screen-title">Validation Result</h2>
+      </header>
+
+      <div class="result-panels">
+        <!-- Left Panel -->
+        <div class="result-left">
+          <!-- Assertion Details -->
+          <div class="panel">
+            <h3 class="panel-title">Assertion Details</h3>
+            <dl id="assertion-details" class="detail-list"></dl>
+          </div>
+
+          <!-- Attributes -->
+          <div id="attributes-panel" class="panel hidden">
+            <h3 class="panel-title">Attributes</h3>
+            <dl id="attributes-list" class="detail-list"></dl>
+          </div>
+
+          <!-- Validation -->
+          <div id="validation-panel" class="panel">
+            <h3 class="panel-title">Validation</h3>
+            <div id="validation-summary" class="validation-summary"></div>
+            <ul id="validation-checks" class="validation-checks"></ul>
+            <div id="validation-meta" class="validation-meta"></div>
+          </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="result-right">
+          <div class="panel xml-panel">
+            <h3 class="panel-title">XML</h3>
+            <pre id="xml-viewer" class="xml-viewer"><code id="xml-code"></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="result-actions">
+        <button id="btn-copy-xml" class="btn btn-action">Copy to Clipboard</button>
+        <button id="btn-save-xml" class="btn btn-action">Save Raw XML</button>
+        <button id="btn-load-idp-result" class="btn btn-action">Load IDP Cert</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screen 4: SAML Viewer -->
+  <section id="screen-viewer" class="screen">
+    <div class="screen-content">
+      <header class="screen-header">
+        <button id="viewer-back" class="btn-back" aria-label="Back">&larr; Back</button>
+        <h2 class="screen-title">SAML Viewer</h2>
+      </header>
+
+      <div class="viewer-actions">
+        <button id="btn-open-file" class="btn btn-action">Open File</button>
+        <button id="btn-paste-clipboard" class="btn btn-action">Paste from Clipboard</button>
+        <button id="btn-load-idp-viewer" class="btn btn-action">Load IDP Cert</button>
+      </div>
+
+      <div class="viewer-input">
+        <textarea id="saml-input" class="saml-textarea" placeholder="Paste SAML data here (XML, base64, or URL-encoded)..." rows="14"></textarea>
+      </div>
+
+      <button id="btn-decode" class="btn btn-primary btn-full">Decode &amp; Validate</button>
+
+      <div id="viewer-spinner" class="viewer-spinner hidden">
+        <div class="spinner"></div>
+        <span>Decoding...</span>
+      </div>
+    </div>
+  </section>
+
   <script src="app.js"></script>
 </body>
 </html>
