@@ -286,20 +286,11 @@
       const filePath = typeof file === 'string' ? file : file.path;
       if (!filePath) return;
 
-      // Read file via a shell command or use fs plugin
-      // Since we have the decode_saml command that takes raw input,
-      // we can read the file and pass it through
       try {
-        // Try using the fetch API with a Tauri asset protocol
-        // Actually, for simplicity, just invoke decode with the file path
-        // The backend decode_saml can handle file content
-        const response = await fetch(convertFileSrc(filePath));
-        const text = await response.text();
+        const text = await invoke('read_file', { path: filePath });
         $('#saml-input').value = text;
         showStatus('File loaded');
       } catch (e) {
-        // Fallback: try to decode directly -- the input might be a path
-        // Read via invoke if available
         showError('Could not read file: ' + String(e));
       }
     } catch (e) {
@@ -796,8 +787,7 @@
       if (!filePath) return;
 
       try {
-        const response = await fetch(convertFileSrc(filePath));
-        const text = await response.text();
+        const text = await invoke('read_file', { path: filePath });
         $('#compare-input-' + side).value = text;
         setCompareStatus(side, 'File loaded', 'success');
       } catch (e) {

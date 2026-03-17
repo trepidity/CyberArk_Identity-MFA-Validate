@@ -419,6 +419,11 @@ pub fn load_chain_cert(
 }
 
 #[tauri::command]
+pub fn read_file(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[tauri::command]
 pub fn save_raw_xml(state: State<'_, Mutex<AppState>>, path: String) -> Result<(), String> {
     let xml = {
         let s = state.lock().unwrap();

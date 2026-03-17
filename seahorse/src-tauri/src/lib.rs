@@ -19,6 +19,7 @@ pub fn run() {
             commands::validate_assertion,
             commands::load_idp_cert,
             commands::load_chain_cert,
+            commands::read_file,
             commands::save_raw_xml,
             commands::run_rest_flow,
             commands::run_browser_flow,
