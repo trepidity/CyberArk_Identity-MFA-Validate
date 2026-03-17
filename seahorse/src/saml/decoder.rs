@@ -2,16 +2,17 @@ use anyhow::{bail, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use flate2::read::DeflateDecoder;
+use serde::Serialize;
 use std::io::Read;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum SamlDocumentType {
     AuthnRequest,
     Response,
     Assertion,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DecodeResult {
     pub document_type: SamlDocumentType,
     pub xml: String,

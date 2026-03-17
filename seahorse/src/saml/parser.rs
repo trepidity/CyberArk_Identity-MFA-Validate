@@ -4,14 +4,15 @@ use base64::Engine;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use quick_xml::Writer;
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SamlParseResult {
     pub full_response_xml: String,
     pub assertion_xml: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct AssertionDetails {
     pub issuer: String,
     pub subject: String,
@@ -25,7 +26,7 @@ pub struct AssertionDetails {
     pub raw_xml: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct AuthnRequestDetails {
     pub id: String,
     pub issue_instant: String,
@@ -38,7 +39,7 @@ pub struct AuthnRequestDetails {
     pub is_passive: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ResponseDetails {
     pub id: String,
     pub issue_instant: String,
@@ -48,7 +49,7 @@ pub struct ResponseDetails {
     pub status: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SamlAttribute {
     pub name: String,
     pub values: Vec<String>,

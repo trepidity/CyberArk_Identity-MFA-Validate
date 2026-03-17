@@ -7,12 +7,14 @@ use openssl::x509::X509;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use serde::Serialize;
+
 use super::c14n;
 use super::trust::{self, IdpTrustStore};
 
 // --- New validation data model (Task 1) ---
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum ValidationSummary {
     Trusted,
     Valid,
@@ -33,7 +35,7 @@ impl ValidationSummary {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidationCheck {
     pub name: String,
     pub passed: bool,
@@ -41,7 +43,7 @@ pub struct ValidationCheck {
     pub diagnostic: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidationReport {
     pub summary: ValidationSummary,
     pub checks: Vec<ValidationCheck>,
