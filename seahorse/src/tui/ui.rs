@@ -7,6 +7,7 @@ use ratatui::Frame;
 use crate::saml::validator::{ValidationReport, ValidationSummary};
 
 use super::app::{App, SamlDocType, SamlInputMode, Screen, SigningMode};
+use crate::tui::compare;
 
 pub fn render(frame: &mut Frame, app: &App) {
     match app.screen {
@@ -18,7 +19,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         Screen::Error => render_error(frame, app),
         Screen::SamlInput => render_saml_input(frame, app),
         Screen::SamlView => render_saml_view(frame, app),
-        Screen::CompareInput | Screen::CompareView => {}
+        Screen::CompareInput => compare::render_compare_input(frame, app),
+        Screen::CompareView => compare::render_compare_view(frame, app),
     }
 }
 
@@ -41,7 +43,7 @@ fn render_env_select(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
 
-    let menu_items = ["PROD", "TST", "View SAML Assertion"];
+    let menu_items = ["PROD", "TST", "View SAML Assertion", "Compare SAML Assertions"];
     let items: Vec<ListItem> = menu_items
         .iter()
         .enumerate()

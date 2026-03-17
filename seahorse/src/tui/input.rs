@@ -2,6 +2,7 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
 use super::app::{App, SamlInputMode, Screen};
 use crate::saml;
+use crate::tui::compare;
 
 pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
@@ -11,6 +12,12 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
         if let Event::Paste(ref text) = ev {
             if app.screen == Screen::SamlInput && app.saml_input_mode == SamlInputMode::Paste {
                 app.saml_paste_buffer.push_str(text);
+            }
+            if app.screen == Screen::CompareInput {
+                let pane = &mut app.compare_panes[app.compare_active_pane];
+                if pane.input_mode == SamlInputMode::Paste {
+                    pane.paste_buffer.push_str(text);
+                }
             }
             return Ok(false);
         }
@@ -75,7 +82,8 @@ pub fn handle_input(app: &mut App) -> std::io::Result<bool> {
                 Screen::Error => handle_error(app, key.code),
                 Screen::SamlInput => handle_saml_input(app, key.code),
                 Screen::SamlView => handle_saml_view(app, key.code),
-                Screen::CompareInput | Screen::CompareView => {}
+                Screen::CompareInput => compare::handle_compare_input(app, key.code),
+                Screen::CompareView => compare::handle_compare_view(app, key.code),
             }
         }
     }
@@ -126,18 +134,18 @@ fn handle_env_select(app: &mut App, key: KeyCode) {
             }
         }
         KeyCode::Down => {
-            if app.env_selection < 2 {
+            if app.env_selection < 3 {
                 app.env_selection += 1;
             }
         }
-        KeyCode::Enter => {
-            if app.env_selection == 2 {
-                app.screen = Screen::SamlInput;
-            } else {
+        KeyCode::Enter => match app.env_selection {
+            2 => app.screen = Screen::SamlInput,
+            3 => app.screen = Screen::CompareInput,
+            _ => {
                 app.environment = Some(app.get_selected_env());
                 app.screen = Screen::FlowSelect;
             }
-        }
+        },
         KeyCode::Char('q') => app.running = false,
         _ => {}
     }
@@ -400,7 +408,7 @@ fn browse_and_load_saml(app: &mut App) {
 
 /// macOS: use osascript to open a file dialog for XML/SAML files.
 #[cfg(target_os = "macos")]
-fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
+pub fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     let _ = disable_raw_mode();
     let result = std::process::Command::new("osascript")
@@ -423,7 +431,7 @@ fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
 
 /// Non-macOS: use rfd for native file dialog.
 #[cfg(not(target_os = "macos"))]
-fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
+pub fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     let _ = disable_raw_mode();
     let file = rfd::FileDialog::new()
@@ -435,7 +443,7 @@ fn pick_open_xml_dialog() -> Option<std::path::PathBuf> {
     file
 }
 
-fn expand_tilde(path: &str) -> String {
+pub fn expand_tilde(path: &str) -> String {
     if path.starts_with('~') {
         if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
             return path.replacen('~', &home.to_string_lossy(), 1);
@@ -555,7 +563,7 @@ fn pick_save_dialog() -> Option<std::path::PathBuf> {
 /// to hang with a spinning ball after the dialog closes.
 ///
 /// On other platforms, uses `rfd` (Rusty File Dialogs) directly.
-fn open_idp_cert_dialog(app: &mut App) {
+pub fn open_idp_cert_dialog(app: &mut App) {
     let file = pick_file_dialog();
 
     if let Some(path) = file {
